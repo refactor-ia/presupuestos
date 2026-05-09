@@ -1,0 +1,48 @@
+name: Bug en una implementación
+description: Reportar un problema en alguna de las implementaciones publicadas
+title: "[bug][modelo] "
+labels: ["bug"]
+body:
+  - type: input
+    id: modelo
+    attributes:
+      label: Modelo afectado
+      description: Carpeta donde está el bug (claude, codex, deepseek, glm, kimi, mimo, minimax, etc.)
+      placeholder: "claude"
+    validations:
+      required: true
+
+  - type: textarea
+    id: descripcion
+    attributes:
+      label: Qué pasa
+      description: Descripción concreta del problema
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Pasos para reproducir
+      placeholder: |
+        1. cd claude
+        2. pnpm dev
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Qué debería pasar
+      description: Citar el scenario del spec si aplica (ej: "scenario IVA del .ai/specs/app-presupuestos.yaml")
+    validations:
+      required: true
+
+  - type: textarea
+    id: entorno
+    attributes:
+      label: Entorno
+      placeholder: "macOS 15.4, Node 20.11, pnpm 9, Chrome 130"
+    validations:
+      required: false

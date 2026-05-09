@@ -54,23 +54,7 @@ Cada implementación es independiente: no comparten `node_modules` ni configurac
 
 ## Sumar otro modelo al benchmark
 
-¿Querés meter Gemini, Mistral, Qwen, o el que quieras?
-
-1. Cloná el repo y creá la carpeta del modelo:
-   ```bash
-   git clone https://github.com/refactor-ia/presupuestos
-   cd presupuestos
-   mkdir mi-modelo && cd mi-modelo
-   ```
-
-2. Copiá el `.ai/` canónico a la subcarpeta:
-   ```bash
-   cp -r ../.ai .
-   ```
-
-3. Pasale al modelo el `KICKSTART.md`, la constitución, el spec y el plan. Implementa la app en esa carpeta sin ver el resto del repo.
-
-4. Subí el resultado en una rama o fork.
+¿Querés meter Gemini, Mistral, Qwen, o el que quieras? El flujo está en [`CONTRIBUTING.md`](./CONTRIBUTING.md): abrís un issue con el template "Nuevo modelo", forkeás, copiás el `.ai/` a una carpeta nueva sin tocar los archivos canónicos, y abrís el PR.
 
 ## Qué se mira
 
@@ -86,3 +70,7 @@ Esto no es un ranking. No busca decir cuál modelo "es el mejor". Lo que mira so
 ## Estado
 
 Los siete tienen el `.ai/` publicado. Las implementaciones se van sumando a medida que cada modelo termina la suya.
+
+## Licencia
+
+MIT. Ver [`LICENSE`](./LICENSE).

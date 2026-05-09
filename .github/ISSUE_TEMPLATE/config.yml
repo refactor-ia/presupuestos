@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Pregunta general
+    url: https://github.com/refactor-ia/presupuestos/issues/new?labels=question
+    about: Para dudas sobre el benchmark, abrí un issue en blanco con label "question".
