@@ -1,0 +1,762 @@
+feature: app-presupuestos
+spec: .ai/specs/app-presupuestos.yaml
+created: 2026-05-03
+project: presupuestos
+
+current_state:
+  description: >
+    Proyecto vacío. Cada modelo implementa en su propia subcarpeta (deepseek/, kimi/, mimo/,
+    minimax/, glm/, codex/, claude/). El bootstrap parte de cero con pnpm create svelte.
+  files:
+    - path: package.json
+      note: generado por pnpm create svelte; agregar jsPDF, mode-watcher, vitest
+    - path: svelte.config.js
+      note: debe usar adapter-static con fallback 'index.html'
+    - path: src/app.css
+      note: '@import "tailwindcss" + @variant dark + @theme con tokens semánticos'
+    - path: src/app.html
+      note: '<html class="dark"> hardcoded para evitar flash en carga'
+    - path: src/routes/+layout.svelte
+      note: ModeWatcher con defaultMode="dark"
+    - path: src/routes/+layout.ts
+      note: 'export const prerender = true; export const ssr = false'
+    - path: src/routes/+page.svelte
+      note: pantalla única que ensambla todos los componentes
+    - path: src/lib/types/budget.ts
+      note: interfaces Budget, BudgetItem, Client
+    - path: src/lib/utils/currency.ts
+      note: 'formatCurrency(value) -> "$ 1234.50"'
+    - path: src/lib/utils/rounding.ts
+      note: 'roundHalfUp(value, decimals?) -> number'
+    - path: src/lib/utils/budgetNumber.ts
+      note: 'generateBudgetNumber() con crypto.getRandomValues()'
+    - path: src/lib/utils/validation.ts
+      note: funciones puras de validación (cantidad, precio, email)
+    - path: src/lib/state/budget.svelte.ts
+      note: state global con $state, $derived para subtotal/iva/total
+    - path: src/lib/components/BudgetForm.svelte
+      note: campos cliente con validación reactiva
+    - path: src/lib/components/ItemsTable.svelte
+      note: lista de ítems con add/remove y validación
+    - path: src/lib/components/TotalsPanel.svelte
+      note: subtotal/IVA/total en tiempo real
+    - path: src/lib/components/ThemeToggle.svelte
+      note: toggle dark/light con toggleMode de mode-watcher
+    - path: src/lib/pdf/exportBudget.ts
+      note: import dinámico de jsPDF dentro del handler; genera PRES-XXXXXX.pdf
+    - path: src/lib/utils/currency.test.ts
+      note: tests de formatCurrency
+    - path: src/lib/utils/rounding.test.ts
+      note: tests de roundHalfUp incluyendo casos half-up
+    - path: src/lib/utils/budgetNumber.test.ts
+      note: tests de generateBudgetNumber
+    - path: tests/totals.test.ts
+      note: tests de cálculo con los números del scenario de IVA
+    - path: tests/validation.test.ts
+      note: tests de validación de campos
+  patterns:
+    - "Svelte 5 runes obligatorios: $state, $derived, $effect, $props, snippets"
+    - "Tailwind v4: @import 'tailwindcss' + @variant dark + @theme, sin tailwind.config.js"
+    - "mode-watcher v1.x: mode.current (no $mode), toggleMode, defaultMode='dark'"
+    - "adapter-static con fallback: 'index.html' obligatorio para SPA routing"
+    - "jsPDF: import dinámico dentro del handler, nunca en top-level (rompe SSR/prerender)"
+    - "formatCurrency: propio con punto decimal, sin Intl.NumberFormat(locale es-*)"
+    - "roundHalfUp: implementado a mano, sin toFixed ni Math.round directo"
+    - "crypto.getRandomValues() para PRES-XXXXXX, una vez al iniciar sesión"
+    - "Sin localStorage/sessionStorage/IndexedDB — estado efímero por diseño"
+
+architecture:
+  pattern: single-page-app
+  entry_point: src/routes/+page.svelte
+  state_layer:
+    file: src/lib/state/budget.svelte.ts
+    description: >
+      Módulo .svelte.ts que exporta un objeto con $state para el presupuesto completo
+      (budgetNumber, client, items) y $derived para subtotal, iva, total, y flags de
+      validación (isValid, canExport). budgetNumber se genera con generateBudgetNumber()
+      al crear el módulo (una vez por sesión).
+  components:
+    - name: BudgetForm
+      file: src/lib/components/BudgetForm.svelte
+      responsibility: >
+        Campos de cliente: nombre (obligatorio), email (opcional, validar formato si presente),
+        dirección (opcional), RUT (opcional). Muestra errores por campo. Lee y modifica el
+        state global.
+    - name: ItemsTable
+      file: src/lib/components/ItemsTable.svelte
+      responsibility: >
+        Formulario de ítem inline (descripción, cantidad int ≥ 1, precio ≥ 0.01 con punto).
+        Lista de ítems cargados con botón eliminar por fila. Validación por campo con mensajes
+        específicos. Rechaza coma en precio.
+    - name: TotalsPanel
+      file: src/lib/components/TotalsPanel.svelte
+      responsibility: >
+        Muestra Subtotal, IVA 22% y Total en tiempo real desde $derived del state.
+        Formato '$ 1234.50' en todos los valores. Siempre visible, arranca en '$ 0.00'.
+    - name: ThemeToggle
+      file: src/lib/components/ThemeToggle.svelte
+      responsibility: >
+        Switch o botón que llama toggleMode(). Refleja mode.current para mostrar estado.
+        No guarda preferencia en localStorage.
+  utils:
+    - file: src/lib/utils/currency.ts
+      exports: "formatCurrency(value: number): string — devuelve '$ 1234.50'"
+    - file: src/lib/utils/rounding.ts
+      exports: "roundHalfUp(value: number, decimals?: number): number — default 2 decimales"
+    - file: src/lib/utils/budgetNumber.ts
+      exports: "generateBudgetNumber(): string — devuelve 'PRES-XXXXXX' con 6 dígitos random"
+    - file: src/lib/utils/validation.ts
+      exports: "isValidQuantity, isValidPrice, isValidEmail, isValidName, isValidDescription"
+  pdf:
+    file: src/lib/pdf/exportBudget.ts
+    description: >
+      Función exportBudget(budget) async. Dentro hace const { default: jsPDF } = await
+      import('jspdf'). Genera el PDF con layout: (1) header PRES-XXXXXX + fecha, (2) datos
+      del cliente, (3) tabla con columnas Descripción/Cant./Precio/Subtotal, (4) totales
+      Subtotal/IVA 22%/Total, (5) footer con número de página. Llama doc.save('PRES-XXXXXX.pdf').
+
+tech_constraints:
+  stack:
+    node: "20 LTS"
+    package_manager: "pnpm 9"
+    framework: "SvelteKit (última estable)"
+    language: "TypeScript strict: true"
+    svelte: "Svelte 5 con runes obligatorios"
+    adapter: "@sveltejs/adapter-static con fallback: 'index.html'"
+    styling: "Tailwind CSS v4 con tokens semánticos"
+    components: "shadcn-svelte (sobre bits-ui)"
+    dark_mode: "mode-watcher v1.x"
+    pdf: "jsPDF (importación dinámica en handler)"
+    testing: "Vitest"
+  forbidden:
+    - "writable(), derived(), readable() de svelte/store"
+    - "$: (reactividad Svelte 4)"
+    - "export let prop (props Svelte 4)"
+    - "$mode (mode-watcher v0.x)"
+    - "tailwind.config.js / tailwind.config.ts"
+    - "@tailwind base/components/utilities"
+    - "Colores hardcoded (bg-white, text-gray-500, etc.)"
+    - "localStorage / sessionStorage / IndexedDB"
+    - "Intl.NumberFormat con locale es-* (genera coma decimal)"
+    - "toFixed(2) para redondeo crítico"
+    - "import jsPDF en top-level (rompe prerender)"
+    - "Omitir fallback: 'index.html' en adapter-static"
+  security:
+    - "Sin persistencia entre sesiones"
+    - "Sin analytics ni requests salientes"
+    - "Sin eval ni innerHTML con input del usuario"
+
+testing_strategy:
+  framework: vitest
+  command: pnpm test
+  required_suites:
+    - name: currency utils
+      file: src/lib/utils/currency.test.ts
+      cases:
+        - "formatCurrency(0) === '$ 0.00'"
+        - "formatCurrency(100) === '$ 100.00'"
+        - "formatCurrency(1234.5) === '$ 1234.50'"
+        - "formatCurrency(31.65) === '$ 31.65'"
+        - "formatCurrency(7.77) === '$ 7.77'"
+    - name: rounding utils
+      file: src/lib/utils/rounding.test.ts
+      cases:
+        - "roundHalfUp(8.6724, 2) === 8.67"
+        - "roundHalfUp(8.675, 2) === 8.68 (half-up, no banker's rounding)"
+        - "roundHalfUp(8.674, 2) === 8.67"
+        - "roundHalfUp(0, 2) === 0"
+        - "roundHalfUp(39.42 * 0.22, 2) === 8.67 (caso del scenario de IVA)"
+    - name: budgetNumber utils
+      file: src/lib/utils/budgetNumber.test.ts
+      cases:
+        - "generateBudgetNumber() devuelve string que matchea /^PRES-\\d{6}$/"
+        - "dos llamadas consecutivas retornan valores distintos con alta probabilidad"
+    - name: totals calculation
+      file: tests/totals.test.ts
+      cases:
+        - "items: [{qty:3, price:10.55}, {qty:1, price:7.77}]"
+        - "subtotal A === 31.65"
+        - "subtotal B === 7.77"
+        - "subtotal total === 39.42"
+        - "IVA 22% === 8.67 (39.42 * 0.22 = 8.6724 -> roundHalfUp -> 8.67)"
+        - "total === 48.09"
+    - name: validation
+      file: tests/validation.test.ts
+      cases:
+        - "cantidad 0 es inválida"
+        - "cantidad 1.5 es inválida (no entero)"
+        - "cantidad -3 es inválida"
+        - "cantidad 1 es válida"
+        - "precio -10 es inválido"
+        - "precio 0 es inválido"
+        - "precio '12,50' (string con coma) es inválido"
+        - "precio 0.01 es válido"
+        - "email '' es válido (opcional)"
+        - "email 'no-es-email' es inválido"
+        - "email 'info@acme.com' es válido"
+
+tasks:
+  - id: T1
+    title: Bootstrap del proyecto
+    description: |
+      Crear el proyecto SvelteKit desde cero en la subcarpeta del modelo.
+      Pasos exactos en orden:
+      1. `pnpm create svelte@latest . -- --template skeleton --types typescript --no-prettier --no-eslint`
+         (dentro de la subcarpeta vacía del modelo)
+      2. `pnpm install`
+      3. Instalar dependencias de producción:
+         `pnpm add mode-watcher jspdf`
+      4. Instalar shadcn-svelte y Tailwind v4:
+         `pnpm dlx shadcn-svelte@latest init`
+         (seleccionar: TypeScript=yes, Tailwind=yes, App css path=src/app.css)
+      5. Instalar Vitest:
+         `pnpm add -D vitest @vitest/ui jsdom`
+      6. Configurar adapter-static en svelte.config.js:
+         ```js
+         import adapter from '@sveltejs/adapter-static';
+         export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };
+         ```
+      7. En vite.config.ts agregar bloque de Vitest:
+         ```ts
+         test: { environment: 'jsdom', globals: true }
+         ```
+      8. En package.json agregar: `"test": "vitest run"`
+      9. Verificar que `pnpm dev` levanta sin errores y que `pnpm build` completa.
+
+      CRÍTICO:
+      - NO generar tailwind.config.js — Tailwind v4 no lo usa.
+      - NO usar @tailwind base/components/utilities en CSS.
+      - adapter-static DEBE tener fallback: 'index.html'.
+    satisfies:
+      - "Happy path (prerequisite)"
+    entry_file: svelte.config.js
+    verify: "pnpm dev (sin errores en consola) && pnpm build (termina sin errores)"
+
+  - id: T2
+    title: Estructura de archivos, tipos de dominio y CSS base
+    description: |
+      Crear toda la estructura de carpetas y archivos con su contenido inicial.
+
+      1. Crear `src/lib/types/budget.ts` con:
+         ```ts
+         export interface Client {
+           name: string;
+           email: string;
+           address: string;
+           rut: string;
+         }
+         export interface BudgetItem {
+           id: string;
+           description: string;
+           quantity: number;
+           unitPrice: number;
+         }
+         export interface Budget {
+           number: string;
+           date: string;
+           client: Client;
+           items: BudgetItem[];
+         }
+         ```
+
+      2. Crear carpetas: src/lib/utils/, src/lib/state/, src/lib/pdf/, src/lib/components/
+
+      3. Reemplazar contenido de src/app.css con:
+         ```css
+         @import "tailwindcss";
+         @variant dark (&:where(.dark, .dark *));
+         @theme {
+           --color-background: oklch(1 0 0);
+           --color-foreground: oklch(0.145 0 0);
+           --color-card: oklch(1 0 0);
+           --color-card-foreground: oklch(0.145 0 0);
+           --color-muted: oklch(0.961 0 0);
+           --color-muted-foreground: oklch(0.556 0 0);
+           --color-border: oklch(0.922 0 0);
+           --color-primary: oklch(0.205 0 0);
+           --color-primary-foreground: oklch(0.985 0 0);
+           --color-destructive: oklch(0.577 0.245 27.325);
+         }
+         .dark {
+           --color-background: oklch(0.145 0 0);
+           --color-foreground: oklch(0.985 0 0);
+           --color-card: oklch(0.205 0 0);
+           --color-card-foreground: oklch(0.985 0 0);
+           --color-muted: oklch(0.269 0 0);
+           --color-muted-foreground: oklch(0.708 0 0);
+           --color-border: oklch(0.269 0 0);
+           --color-primary: oklch(0.922 0 0);
+           --color-primary-foreground: oklch(0.205 0 0);
+           --color-destructive: oklch(0.704 0.191 22.216);
+         }
+         ```
+
+      4. Editar src/app.html: <html lang="es" class="dark">
+
+      5. Crear src/routes/+layout.ts:
+         ```ts
+         export const prerender = true;
+         export const ssr = false;
+         ```
+
+      6. Crear src/routes/+layout.svelte:
+         ```svelte
+         <script lang="ts">
+           import { ModeWatcher } from 'mode-watcher';
+           import '../app.css';
+           let { children } = $props();
+         </script>
+         <ModeWatcher defaultMode="dark" />
+         {@render children()}
+         ```
+    satisfies:
+      - "Toggle de tema dark/light"
+      - "Happy path (prerequisite)"
+    entry_file: src/lib/types/budget.ts
+    verify: "pnpm build (sin errores TypeScript)"
+
+  - id: T3
+    title: Utils puros con tests completos
+    description: |
+      Implementar los módulos de utilidades con sus tests Vitest.
+
+      === src/lib/utils/rounding.ts ===
+      ```ts
+      export function roundHalfUp(value: number, decimals: number = 2): number {
+        const factor = Math.pow(10, decimals);
+        return Math.floor(value * factor + 0.5) / factor;
+      }
+      ```
+      CRÍTICO: NO usar toFixed() ni Math.round() directo — no son half-up consistentes.
+
+      === src/lib/utils/currency.ts ===
+      ```ts
+      import { roundHalfUp } from './rounding';
+      export function formatCurrency(value: number): string {
+        const rounded = roundHalfUp(value, 2);
+        const [int, dec] = rounded.toFixed(2).split('.');
+        return `$ ${int}.${dec}`;
+      }
+      ```
+      CRÍTICO: NO usar Intl.NumberFormat con locale es-* (genera coma decimal).
+      Formato EXACTO: prefijo "$ " (signo + espacio) + entero + punto + 2 decimales.
+
+      === src/lib/utils/budgetNumber.ts ===
+      ```ts
+      export function generateBudgetNumber(): string {
+        const array = new Uint32Array(1);
+        crypto.getRandomValues(array);
+        const digits = String(array[0] % 1_000_000).padStart(6, '0');
+        return `PRES-${digits}`;
+      }
+      ```
+
+      === src/lib/utils/validation.ts ===
+      ```ts
+      export function isValidQuantity(value: number | string): boolean {
+        const n = typeof value === 'string' ? Number(value) : value;
+        return Number.isInteger(n) && n >= 1;
+      }
+      export function isValidPrice(value: unknown): boolean {
+        // Rechazar string con coma explícitamente
+        if (typeof value === 'string' && value.includes(',')) return false;
+        const n = typeof value === 'string' ? Number(value) : (value as number);
+        return typeof n === 'number' && !isNaN(n) && n >= 0.01;
+      }
+      export function isValidEmail(value: string): boolean {
+        if (value.trim() === '') return true; // opcional
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+      }
+      export function isValidName(value: string): boolean {
+        return value.trim().length > 0;
+      }
+      export function isValidDescription(value: string): boolean {
+        return value.trim().length > 0;
+      }
+      ```
+
+      === Tests requeridos ===
+      - rounding.test.ts: 8.6724→8.67, 8.675→8.68, 8.674→8.67, 0→0, (39.42*0.22)→8.67
+      - currency.test.ts: 0→'$ 0.00', 100→'$ 100.00', 1234.5→'$ 1234.50', 31.65→'$ 31.65', 7.77→'$ 7.77'
+      - budgetNumber.test.ts: matchea /^PRES-\d{6}$/, dos llamadas distintas
+      - validation tests (en tests/validation.test.ts en T4): cantidades, precios, emails
+    satisfies:
+      - "Cálculo de totales con IVA 22% y redondeo half-up"
+      - "Refresh descarta estado y genera nuevo número PRES"
+    entry_file: src/lib/utils/rounding.ts
+    verify: "pnpm test (rounding/currency/budgetNumber pasan)"
+
+  - id: T4
+    title: State global con runes y lógica de cálculo
+    description: |
+      Implementar src/lib/state/budget.svelte.ts con el estado completo.
+
+      ```ts
+      import { generateBudgetNumber } from '$lib/utils/budgetNumber';
+      import { roundHalfUp } from '$lib/utils/rounding';
+      import { isValidName, isValidEmail } from '$lib/utils/validation';
+      import type { BudgetItem, Client } from '$lib/types/budget';
+
+      function createBudgetState() {
+        const budgetNumber = generateBudgetNumber();
+
+        let client = $state<Client>({ name: '', email: '', address: '', rut: '' });
+        let items = $state<BudgetItem[]>([]);
+
+        const subtotal = $derived(
+          items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
+        );
+        const iva = $derived(roundHalfUp(subtotal * 0.22, 2));
+        const total = $derived(roundHalfUp(subtotal + iva, 2));
+
+        const isClientNameValid = $derived(isValidName(client.name));
+        const isClientEmailValid = $derived(isValidEmail(client.email));
+        const canExport = $derived(
+          isClientNameValid && isClientEmailValid && items.length > 0
+        );
+
+        function addItem(item: Omit<BudgetItem, 'id'>): void {
+          items.push({ ...item, id: crypto.randomUUID() });
+        }
+        function removeItem(id: string): void {
+          items = items.filter(i => i.id !== id);
+        }
+
+        return {
+          get budgetNumber() { return budgetNumber; },
+          get client() { return client; },
+          set client(v: Client) { client = v; },
+          get items() { return items; },
+          get subtotal() { return subtotal; },
+          get iva() { return iva; },
+          get total() { return total; },
+          get isClientNameValid() { return isClientNameValid; },
+          get isClientEmailValid() { return isClientEmailValid; },
+          get canExport() { return canExport; },
+          addItem,
+          removeItem,
+          get date() { return new Date().toLocaleDateString('es-UY'); }
+        };
+      }
+
+      export const budgetState = createBudgetState();
+      ```
+
+      Crear tests/totals.test.ts con scenario de IVA:
+      - subtotalA = 3 * 10.55 === 31.65
+      - subtotalB = 1 * 7.77 === 7.77
+      - subtotalTotal = 39.42
+      - iva = roundHalfUp(39.42 * 0.22, 2) === 8.67
+      - total = 39.42 + 8.67 === 48.09
+
+      Crear tests/validation.test.ts cubriendo todos los casos del spec.
+    satisfies:
+      - "Cálculo de totales con IVA 22% y redondeo half-up"
+      - "Eliminar el último ítem deja totales en cero"
+      - "Lista vacía: botón PDF disabled con tooltip"
+      - "Validación: nombre del cliente vacío"
+      - "Validación: email del cliente con formato inválido"
+      - "Validación: cantidad de ítem inválida"
+      - "Validación: precio unitario inválido"
+      - "Refresh descarta estado y genera nuevo número PRES"
+    entry_file: src/lib/state/budget.svelte.ts
+    verify: "pnpm test (totals.test.ts y validation.test.ts pasan)"
+
+  - id: T5
+    title: Componentes UI y ensamblaje de página
+    description: |
+      Implementar los cuatro componentes y ensamblar +page.svelte.
+      Todos usan Svelte 5 runes y tokens semánticos Tailwind v4.
+
+      === BudgetForm.svelte ===
+      - Importa budgetState
+      - Campos: nombre (required), email (opcional), dirección, RUT
+      - Error nombre: "El nombre del cliente es obligatorio"
+      - Error email: "El email no tiene un formato válido"
+      - Tokens: bg-card, text-foreground, text-muted-foreground, border-border, bg-destructive
+      - Muestra budgetState.budgetNumber prominentemente
+
+      === ItemsTable.svelte ===
+      - Form inline con descripción, cantidad, precio
+      - Validación inline:
+        * descripción vacía → "La descripción es obligatoria"
+        * cantidad inválida → "Debe ser un entero mayor o igual a 1"
+        * precio inválido → "Debe ser un número mayor o igual a 0.01 con punto como separador decimal"
+      - addItem() limpia el form al éxito
+      - Lista de filas: descripción / cantidad / precio (formatCurrency) / subtotal (formatCurrency) / botón eliminar
+
+      === TotalsPanel.svelte ===
+      - Lee subtotal, iva, total del state
+      - Labels: "Subtotal:", "IVA 22%:", "Total:"
+      - Siempre visible, arranca en "$ 0.00"
+
+      === ThemeToggle.svelte ===
+      ```svelte
+      <script lang="ts">
+        import { toggleMode, mode } from 'mode-watcher';
+      </script>
+      <button onclick={toggleMode}>
+        {mode.current === 'dark' ? 'Modo oscuro' : 'Modo claro'}
+      </button>
+      ```
+      USAR mode.current — PROHIBIDO $mode.
+
+      === +page.svelte ===
+      - Layout vertical: ThemeToggle (top-right) + BudgetForm + ItemsTable + TotalsPanel + botón Exportar PDF
+      - Botón "Exportar PDF":
+        * disabled={!budgetState.canExport}
+        * title cuando items.length===0: "Agregá al menos un ítem"
+        * onclick handler async con import dinámico (ver T6)
+      - bg-background + text-foreground en root, sin colores hardcoded
+    satisfies:
+      - "Validación: nombre del cliente vacío"
+      - "Validación: email del cliente con formato inválido"
+      - "Validación: cantidad de ítem inválida"
+      - "Validación: precio unitario inválido"
+      - "Validación: descripción de ítem vacía"
+      - "Cálculo de totales con IVA 22% y redondeo half-up"
+      - "Eliminar el último ítem deja totales en cero"
+      - "Lista vacía: botón PDF disabled con tooltip"
+    entry_file: src/lib/components/BudgetForm.svelte
+    verify: |
+      pnpm build sin errores TS +
+      Manual: número PRES visible, totales en vivo al agregar/eliminar ítems,
+      botón PDF disabled con tooltip "Agregá al menos un ítem" cuando lista vacía
+
+  - id: T6
+    title: Generación de PDF con jsPDF
+    description: |
+      Implementar src/lib/pdf/exportBudget.ts con import DINÁMICO obligatorio.
+
+      ```ts
+      import type { BudgetItem } from '$lib/types/budget';
+      import { formatCurrency } from '$lib/utils/currency';
+
+      interface ExportData {
+        budgetNumber: string;
+        date: string;
+        client: { name: string; email: string; address: string; rut: string };
+        items: BudgetItem[];
+        subtotal: number;
+        iva: number;
+        total: number;
+      }
+
+      export async function exportBudget(data: ExportData): Promise<void> {
+        // Import dinámico OBLIGATORIO — top-level rompe prerender
+        const { default: jsPDF } = await import('jspdf');
+
+        const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const margin = 20;
+        let y = margin;
+
+        // (1) Header
+        doc.setFontSize(18);
+        doc.text(data.budgetNumber, margin, y);
+        doc.setFontSize(10);
+        doc.text(data.date, pageWidth - margin, y, { align: 'right' });
+        y += 10;
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 8;
+
+        // (2) Cliente
+        doc.setFontSize(11);
+        doc.text('Cliente', margin, y);
+        y += 6;
+        doc.setFontSize(10);
+        doc.text(data.client.name, margin, y); y += 5;
+        if (data.client.email) { doc.text(data.client.email, margin, y); y += 5; }
+        if (data.client.address) { doc.text(data.client.address, margin, y); y += 5; }
+        if (data.client.rut) { doc.text(`RUT: ${data.client.rut}`, margin, y); y += 5; }
+        y += 5;
+
+        // (3) Tabla
+        const colDesc = margin, colQty = 110, colPrice = 135, colSubtotal = 165;
+        doc.setFont('helvetica', 'bold');
+        doc.text('Descripción', colDesc, y);
+        doc.text('Cant.', colQty, y);
+        doc.text('Precio', colPrice, y);
+        doc.text('Subtotal', colSubtotal, y);
+        y += 4;
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 5;
+        doc.setFont('helvetica', 'normal');
+
+        for (const item of data.items) {
+          const itemSubtotal = item.quantity * item.unitPrice;
+          doc.text(item.description, colDesc, y);
+          doc.text(String(item.quantity), colQty, y);
+          doc.text(formatCurrency(item.unitPrice), colPrice, y);
+          doc.text(formatCurrency(itemSubtotal), colSubtotal, y);
+          y += 6;
+        }
+        y += 4;
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 8;
+
+        // (4) Totales
+        const labelX = 130, valueX = pageWidth - margin;
+        doc.text('Subtotal:', labelX, y);
+        doc.text(formatCurrency(data.subtotal), valueX, y, { align: 'right' }); y += 6;
+        doc.text('IVA 22%:', labelX, y);
+        doc.text(formatCurrency(data.iva), valueX, y, { align: 'right' }); y += 6;
+        doc.setFont('helvetica', 'bold');
+        doc.text('Total:', labelX, y);
+        doc.text(formatCurrency(data.total), valueX, y, { align: 'right' });
+
+        // (5) Footer
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.text('Página 1', pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: 'center' });
+
+        doc.save(`${data.budgetNumber}.pdf`);
+      }
+      ```
+
+      En +page.svelte el handler:
+      ```ts
+      async function handleExport() {
+        const { exportBudget } = await import('$lib/pdf/exportBudget');
+        await exportBudget({
+          budgetNumber: budgetState.budgetNumber,
+          date: budgetState.date,
+          client: budgetState.client,
+          items: budgetState.items,
+          subtotal: budgetState.subtotal,
+          iva: budgetState.iva,
+          total: budgetState.total
+        });
+      }
+      ```
+    satisfies:
+      - "Happy path: crear presupuesto completo y exportar PDF"
+      - "PDF generado tiene layout y filename correctos"
+    entry_file: src/lib/pdf/exportBudget.ts
+    verify: |
+      Manual:
+      1. Cargar 'Cliente Demo', ítem 'Diseño web' cant 2 precio 50.00
+      2. Click 'Exportar PDF' → descarga PRES-XXXXXX.pdf
+      3. Abrir PDF: header con número+fecha, sección Cliente Demo,
+         fila 'Diseño web | 2 | $ 50.00 | $ 100.00',
+         totales 'Subtotal: $ 100.00', 'IVA 22%: $ 22.00', 'Total: $ 122.00',
+         footer con número de página
+
+  - id: T7
+    title: Dark mode default ON y toggle funcional
+    description: |
+      Verificar y completar la integración del dark mode.
+
+      Checklist:
+
+      1. src/app.html tiene <html lang="es" class="dark">
+         (sin esto hay flash visible al cargar)
+
+      2. src/routes/+layout.svelte tiene <ModeWatcher defaultMode="dark" />
+         (sin defaultMode arranca en light)
+
+      3. src/app.css tiene EXACTAMENTE después de @import:
+         @variant dark (&:where(.dark, .dark *));
+         (sin esto los dark: no responden a la clase .dark de mode-watcher)
+
+      4. ThemeToggle usa mode.current (NO $mode):
+         import { toggleMode, mode } from 'mode-watcher';
+         ...mode.current === 'dark'...
+
+      5. .dark { } block presente en app.css con todas las variables redefinidas
+
+      6. Buscar y reemplazar TODOS los colores hardcoded en componentes:
+         bg-white → bg-card
+         bg-gray-100 → bg-muted
+         text-gray-900 → text-foreground
+         text-gray-500 → text-muted-foreground
+         border-gray-* → border-border
+
+      Si algún punto falla, corregir.
+    satisfies:
+      - "Toggle de tema dark/light"
+    entry_file: src/app.html
+    verify: |
+      Manual:
+      1. pnpm dev
+      2. Abre la app en dark mode SIN flash
+      3. Click ThemeToggle → light mode
+      4. Click de nuevo → dark mode
+      5. pnpm build sin errores
+
+  - id: T8
+    title: Verificación final completa
+    description: |
+      Ejecutar verificación completa. NO implementa código nuevo salvo correcciones de bugs.
+
+      === Tests automatizados ===
+      pnpm test debe pasar con TODOS:
+      - rounding.test.ts (incluye caso IVA scenario)
+      - currency.test.ts
+      - budgetNumber.test.ts
+      - totals.test.ts (3×10.55 + 1×7.77 → IVA 8.67 → total 48.09)
+      - validation.test.ts
+
+      === Walkthrough manual de los 12 scenarios ===
+      Abrir pnpm dev y verificar uno por uno:
+
+      SC1 Happy path PDF: Cliente Demo + Diseño web 2×50 → PRES.pdf con totales 100/22/122
+      SC2 Nombre vacío + ítem: error en nombre, botón PDF disabled
+      SC3 Email 'no-es-email': error formato, botón disabled
+      SC4 Cantidad 0/1.5/-3: error, ítem no se agrega
+      SC5 Precio -10/0/'12,50': error con mención punto decimal, ítem no agregado
+      SC6 Descripción vacía: error obligatorio, ítem no agregado
+      SC7 IVA: agregar ítem A (3×10.55) y B (1×7.77) → Subtotal $ 39.42, IVA $ 8.67, Total $ 48.09
+      SC8 Eliminar último: lista vacía, totales $ 0.00, botón disabled
+      SC9 Tooltip: hover sobre botón disabled → "Agregá al menos un ítem"
+      SC10 Toggle: dark→light→dark
+      SC11 Refresh: nuevo número PRES distinto del anterior
+      SC12 PDF Acme: cliente completo + 2 ítems → PDF con header/cliente/tabla/totales/footer
+
+      === Build final ===
+      pnpm build sin errores ni warnings TypeScript.
+    satisfies:
+      - "Happy path: crear presupuesto completo y exportar PDF"
+      - "Validación: nombre del cliente vacío"
+      - "Validación: email del cliente con formato inválido"
+      - "Validación: cantidad de ítem inválida"
+      - "Validación: precio unitario inválido"
+      - "Validación: descripción de ítem vacía"
+      - "Cálculo de totales con IVA 22% y redondeo half-up"
+      - "Eliminar el último ítem deja totales en cero"
+      - "Lista vacía: botón PDF disabled con tooltip"
+      - "Toggle de tema dark/light"
+      - "Refresh descarta estado y genera nuevo número PRES"
+      - "PDF generado tiene layout y filename correctos"
+    entry_file: tests/totals.test.ts
+    verify: "pnpm test (suite completa) && pnpm build (sin errores)"
+
+batches:
+  - id: B1
+    tasks: [T1, T2]
+    description: "Bootstrap + estructura/tipos/CSS"
+  - id: B2
+    tasks: [T3, T4]
+    description: "Utils puros con tests + state global con tests de cálculo"
+  - id: B3
+    tasks: [T5, T6]
+    description: "Componentes UI + generación PDF"
+  - id: B4
+    tasks: [T7, T8]
+    description: "Dark mode + verificación final"
+
+notes: |
+  CONTEXTO DE BENCHMARKING
+  Este plan es input idéntico para 7 modelos (deepseek, kimi, mimo, minimax, glm, codex, claude).
+  Cada modelo implementa en su subcarpeta desde cero. La precisión en strings exactos, formatos
+  y comportamientos es deliberada para garantizar comparabilidad.
+
+  ANTI-PATTERNS CRÍTICOS (errores frecuentes):
+  - jsPDF en top-level rompe prerender → import dinámico DENTRO del handler.
+  - tailwind.config.js no existe en v4 → toda config en app.css con @theme.
+  - $mode no existe en mode-watcher v1 → usar mode.current.
+  - toFixed(2) y Math.round() no son half-up consistentes → roundHalfUp manual.
+  - Intl.NumberFormat con locale es-* genera coma decimal → formatCurrency manual.
+
+  NÚMEROS EXACTOS DEL SCENARIO DE IVA (tests determinísticos):
+  3×10.55 + 1×7.77 → subtotal 39.42 → IVA = roundHalfUp(39.42*0.22, 2) = 8.67 → total 48.09.
