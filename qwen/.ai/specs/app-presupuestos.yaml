@@ -1,0 +1,107 @@
+feature: app-presupuestos
+created: 2026-05-03
+project: presupuestos
+
+goals:
+  - "Permitir a un profesional armar un presupuesto cliente-por-cliente en una sola pantalla, viendo totales actualizados en tiempo real a medida que carga ítems"
+  - "Entregar al cliente un PDF descargable con identificador único del presupuesto (PRES-XXXXXX), datos del cliente, detalle de ítems y totales con IVA discriminado"
+  - "Operar 100% en el navegador sin backend ni cuentas, de modo que el usuario pueda usar la app inmediatamente sin fricción de registro ni configuración"
+
+constraints:
+  - "El estado es efímero: cualquier refresh del navegador descarta el presupuesto actual y genera un nuevo número PRES — no se persiste nada entre sesiones"
+  - "Todos los importes se muestran en pesos con prefijo `$ ` y exactamente dos decimales separados por punto (ej: `$ 1234.50`); el IVA se calcula como 22% sobre el subtotal total con redondeo half-up a 2 decimales"
+  - "El campo nombre del cliente y la descripción de cada ítem son obligatorios; cantidad debe ser entero ≥ 1 y precio unitario número ≥ 0.01 con punto como separador decimal"
+  - "El PDF generado debe descargarse con nombre `PRES-XXXXXX.pdf` y contener header (número + fecha), datos del cliente, tabla de ítems con columnas Descripción/Cant./Precio/Subtotal, bloque de totales (Subtotal, IVA 22%, Total) y footer con número de página"
+
+not_in_scope:
+  - "Persistencia entre sesiones (localStorage, IndexedDB, backend, cuentas de usuario, historial de presupuestos)"
+  - "Múltiples monedas, múltiples tasas de IVA, IVA por línea, descuentos, recargos, impuestos adicionales o conversión de moneda"
+  - "Edición/duplicación/búsqueda de presupuestos previos, envío por email, firma digital, integración con sistemas contables o exportación a formatos distintos de PDF"
+
+scenarios:
+  - name: "Happy path: crear presupuesto completo y exportar PDF"
+    given: "El usuario abre la app y se generó automáticamente un número PRES-XXXXXX visible en la UI"
+    when: "Carga nombre del cliente 'Cliente Demo', agrega un ítem con descripción 'Diseño web', cantidad 2 y precio unitario 50.00, y hace click en 'Exportar PDF'"
+    then: "Se descarga un archivo con nombre exacto `PRES-XXXXXX.pdf` (mismo número que muestra la UI), que contiene en el header el número y la fecha actual, en la sección cliente 'Cliente Demo', una fila de tabla con 'Diseño web | 2 | $ 50.00 | $ 100.00', y en totales 'Subtotal: $ 100.00', 'IVA 22%: $ 22.00', 'Total: $ 122.00'"
+
+  - name: "Validación: nombre del cliente vacío"
+    given: "El usuario tiene al menos un ítem cargado correctamente y el campo nombre del cliente está vacío"
+    when: "Intenta exportar PDF o se evalúa el estado del formulario"
+    then: "El campo nombre muestra un mensaje de error indicando que es obligatorio y el botón 'Exportar PDF' permanece disabled"
+
+  - name: "Validación: email del cliente con formato inválido"
+    given: "El usuario completó nombre del cliente 'Ana López' y escribió 'no-es-email' en el campo email"
+    when: "El campo email pierde foco o se valida el formulario"
+    then: "El campo email muestra un mensaje de error indicando formato inválido y el botón 'Exportar PDF' queda disabled mientras el email sea inválido"
+
+  - name: "Validación: cantidad de ítem inválida (cero, decimal o negativo)"
+    given: "El usuario está cargando un ítem con descripción válida y precio válido"
+    when: "Ingresa en cantidad un valor 0, 1.5 o -3 e intenta agregar el ítem o pierde foco del campo"
+    then: "Se muestra un mensaje de error en el campo cantidad indicando que debe ser un entero mayor o igual a 1 y el ítem no se agrega a la lista"
+
+  - name: "Validación: precio unitario inválido (negativo, cero o con coma)"
+    given: "El usuario está cargando un ítem con descripción y cantidad válidas"
+    when: "Ingresa en precio unitario un valor -10, 0, o '12,50' (con coma)"
+    then: "Se muestra un mensaje de error indicando que el precio debe ser un número mayor o igual a 0.01 con punto como separador decimal, y el ítem no se agrega"
+
+  - name: "Validación: descripción de ítem vacía"
+    given: "El usuario tiene cantidad y precio válidos pero descripción vacía"
+    when: "Intenta agregar el ítem"
+    then: "Se muestra un mensaje de error indicando que la descripción es obligatoria y el ítem no se agrega a la lista"
+
+  - name: "Cálculo de totales con IVA 22% y redondeo half-up"
+    given: "El usuario tiene cargados dos ítems: 'A' cantidad 3 precio 10.55, y 'B' cantidad 1 precio 7.77"
+    when: "La tabla de ítems se renderiza con ambos cargados"
+    then: "Subtotal del ítem A muestra `$ 31.65`, subtotal de B muestra `$ 7.77`, Subtotal total muestra `$ 39.42`, IVA 22% muestra `$ 8.67` (39.42 * 0.22 = 8.6724 redondeado half-up a 8.67), Total muestra `$ 48.09`"
+
+  - name: "Eliminar el último ítem deja totales en cero"
+    given: "El usuario tiene exactamente un ítem cargado con totales no cero visibles"
+    when: "Hace click en eliminar ese ítem"
+    then: "La lista de ítems queda vacía, Subtotal muestra `$ 0.00`, IVA 22% muestra `$ 0.00`, Total muestra `$ 0.00`, y el botón 'Exportar PDF' queda disabled"
+
+  - name: "Lista vacía: botón PDF disabled con tooltip"
+    given: "El usuario abre la app por primera vez sin haber agregado ningún ítem (con o sin datos de cliente cargados)"
+    when: "Inspecciona el botón 'Exportar PDF' o intenta hacer hover"
+    then: "El botón 'Exportar PDF' está disabled y muestra el tooltip exacto 'Agregá al menos un ítem'"
+
+  - name: "Toggle de tema dark/light"
+    given: "El usuario abre la app por primera vez con dark mode activo por defecto"
+    when: "Hace click en el switch de tema"
+    then: "La UI cambia a light mode aplicando los tokens semánticos correspondientes; un segundo click vuelve a dark mode"
+
+  - name: "Refresh descarta estado y genera nuevo número PRES"
+    given: "El usuario tiene cargado un presupuesto con número PRES-123456, cliente y dos ítems"
+    when: "Refresca el navegador (F5 o Ctrl+R)"
+    then: "La app vuelve al estado inicial: nuevo número PRES-XXXXXX distinto del anterior con probabilidad cercana a 1 (6 dígitos random), datos del cliente vacíos, lista de ítems vacía, totales en `$ 0.00`"
+
+  - name: "PDF generado tiene layout y filename correctos"
+    given: "El usuario tiene un presupuesto válido con número PRES-654321, cliente 'Acme SA' con email 'info@acme.com', dirección 'Av. Siempre Viva 742', RUT '210000000019', y dos ítems cargados"
+    when: "Hace click en 'Exportar PDF'"
+    then: "Se descarga un archivo `PRES-654321.pdf` cuyo contenido en orden vertical es: (1) header con 'PRES-654321' y fecha del día, (2) bloque de datos del cliente con nombre/email/dirección/RUT, (3) tabla con columnas 'Descripción', 'Cant.', 'Precio', 'Subtotal' y una fila por ítem, (4) bloque de totales con 'Subtotal', 'IVA 22%' y 'Total', (5) footer con número de página"
+
+notes: |
+  Contexto de benchmarking
+  ------------------------
+  Este spec es input idéntico para 7 modelos de IA (deepseek, kimi, mimo, minimax, glm, codex, claude) que implementan la misma feature en condiciones iguales para una comparativa de RefactorIA. La prescripción fuerte sobre comportamiento observable, formato de strings ($ con espacio + dos decimales con punto), filenames y layout de PDF es deliberada: garantiza comparabilidad. Queda libre por modelo: estilo visual fino (colores específicos, espaciados, microanimaciones) y la organización interna del state.
+
+  Stack pinned (vive en constitution.md, no en constraints)
+  ----------------------------------------------------------
+  SvelteKit + Svelte 5 con runes obligatorios ($state, $derived, $effect, $props), TypeScript estricto, @sveltejs/adapter-static (SPA pure-frontend con fallback: 'index.html'), shadcn-svelte, Tailwind CSS v4 con tokens semánticos, mode-watcher usando mode.current, pnpm 9, Node 20 LTS, Vitest, jsPDF.
+
+  Anti-patterns prohibidos (frecuentes)
+  ------------------------------------------------------------------------
+  - Sintaxis Svelte 4: writable(), $:, export let — está prohibido, usar runes.
+  - Usar $mode en vez de mode.current de mode-watcher.
+  - Generar tailwind.config.js — Tailwind v4 no lo usa, configuración via @theme en CSS.
+  - Confundir shadcn-svelte con shadcn/ui (React) — son librerías distintas.
+  - Olvidar fallback: 'index.html' en adapter-static — rompe SPA routing.
+  - Romper SSR con jsPDF: requiere import dinámico dentro del handler de click, o ssr=false en la página que lo usa.
+
+  Decisiones de diseño cerradas (no abrir debate)
+  -----------------------------------------------
+  - Persistencia efímera por diseño: la app es de un solo presupuesto a la vez, sin login ni historial.
+  - IVA único 22% sobre subtotal total (no por línea) con redondeo half-up a 2 decimales.
+  - Locale decimal: punto solamente, rechazar coma explícitamente con mensaje de error.
+  - Dark mode default ON.
+  - PDF generado con jsPDF (no window.print()) para tener control total del layout y nombre de archivo.
+  - Numeración PRES-XXXXXX con 6 dígitos numéricos random generada al iniciar sesión, mantenida hasta refresh.
