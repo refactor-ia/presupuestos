@@ -1,25 +1,27 @@
-# Presupuestos: benchmark de 7 LLMs
+# Presupuestos: seven-model LLM benchmark
 
-Misma app, mismo spec, mismas constraints. Siete modelos la implementan en paralelo, cada uno aislado en su carpeta, sin ver lo que hicieron los demás.
+One budget calculator, one specification, and one set of constraints. Seven models implement the same application independently in separate directories, without seeing one another's work.
 
-La app es una calculadora de presupuestos en SvelteKit + Svelte 5 + Tailwind v4. Lo interesante no es la app: es ver qué hace cada modelo cuando le pasás exactamente el mismo input (constitución, spec con scenarios `Given/When/Then`, plan de tasks ordenado, números de prueba determinísticos) y lo dejás trabajar solo.
+This is not a ranking. The benchmark compares qualitative implementation decisions made from the same canonical input.
 
-## El input compartido
+## Canonical benchmark input
 
-Los tres archivos canónicos viven en [`.ai/`](./.ai/) y son idénticos para los siete modelos:
+The three canonical inputs are in [`.ai/`](./.ai/) and are identical for all seven models:
 
-| Archivo | Qué define |
-|---------|-----------|
-| [`.ai/constitution.md`](./.ai/constitution.md) | Stack, principios de implementación, anti-patterns prohibidos |
-| [`.ai/specs/app-presupuestos.yaml`](./.ai/specs/app-presupuestos.yaml) | Goals, constraints y scenarios `Given/When/Then` con números exactos |
-| [`.ai/plans/app-presupuestos.yaml`](./.ai/plans/app-presupuestos.yaml) | Tasks ordenadas, dependencias y datos de prueba determinísticos |
+| File | Defines |
+| --- | --- |
+| [`.ai/constitution.md`](./.ai/constitution.md) | The fixed stack, implementation principles, and prohibited anti-patterns |
+| [`.ai/specs/app-presupuestos.yaml`](./.ai/specs/app-presupuestos.yaml) | Goals, constraints, and exact `Given/When/Then` scenarios |
+| [`.ai/plans/app-presupuestos.yaml`](./.ai/plans/app-presupuestos.yaml) | Ordered tasks, dependencies, and deterministic test data |
 
-[`.ai/KICKSTART.md`](./.ai/KICKSTART.md) es el punto de entrada. Cada modelo lo lee primero: dice en qué orden leer los otros tres archivos y fija los números exactos del scenario de IVA.
+[`.ai/KICKSTART.md`](./.ai/KICKSTART.md) is the entry point. It defines the required reading order and the exact VAT scenario values.
 
-## Los siete contendientes
+The canonical `.ai` content remains in Spanish by benchmark design. It is the shared source input, not documentation that implementations should translate.
 
-| Modelo | Vendor | Carpeta |
-|--------|--------|---------|
+## Models
+
+| Model | Vendor | Directory |
+| --- | --- | --- |
 | Claude | Anthropic | [`claude/`](./claude/) |
 | Codex / GPT | OpenAI | [`codex/`](./codex/) |
 | DeepSeek | DeepSeek | [`deepseek/`](./deepseek/) |
@@ -28,49 +30,52 @@ Los tres archivos canónicos viven en [`.ai/`](./.ai/) y son idénticos para los
 | MiMo | Xiaomi | [`mimo/`](./mimo/) |
 | MiniMax | MiniMax | [`minimax/`](./minimax/) |
 
-Cada subcarpeta replica el mismo `.ai/` y suma la implementación SvelteKit cuando el modelo termina.
+Each model works from its own copy of `.ai/` and implements only inside its own directory. In the current tracked tree, every model directory contains its `.ai/` copy and `README.md`; no SvelteKit implementation files or project manifests are tracked yet.
 
-## Stack y constraints
+## Fixed technical requirements
 
-- **Framework:** SvelteKit con Svelte 5 runes (`$state`, `$derived`, `$effect`)
-- **Estilos:** Tailwind v4 configurado en `app.css` con `@theme` (no existe `tailwind.config.js`)
-- **PDF:** jsPDF importado dinámico dentro del handler. Top-level rompe prerender
-- **Numérico:** redondeo half-up manual, sin `toFixed` ni `Math.round`. `formatCurrency` propio sin `Intl.NumberFormat`
-- **Locale:** `es-UY`, IVA 22%, formato de moneda `$ 1.234,56`
+- **Framework:** SvelteKit with Svelte 5 runes, including `$state`, `$derived`, and `$effect`.
+- **Styling:** Tailwind v4 configured in `app.css` with `@theme`. Do not add `tailwind.config.js`.
+- **PDF:** Load jsPDF dynamically inside the export handler. A top-level import can break prerendering.
+- **Rounding:** Implement half-up rounding manually for critical values. Do not use `toFixed` or `Math.round` for critical rounding.
+- **Currency:** Use a custom formatter. `Intl.NumberFormat` is forbidden. The exact format is `$ ` followed by an integer, a period, and exactly two decimals: `$ 1234.50`.
+- **Number input:** Use a period as the decimal separator. Comma-decimal input is invalid.
+- **Dates:** Use `es-UY` only for date display. It does not control currency or number output.
+- **VAT:** Apply IVA 22% to the total subtotal, using manual half-up rounding to two decimals.
 
-Los anti-patterns están enumerados en `constitution.md` y son condición de aprobación. Cada implementación los respeta o no entra.
+The prohibited anti-patterns in [`.ai/constitution.md`](./.ai/constitution.md) are benchmark requirements, not suggestions.
 
-## Correr una implementación
+## Run an implementation
 
-Una vez que la carpeta del modelo tiene el código:
+When a model directory contains an implementation, run it from that directory:
 
 ```bash
-cd <modelo>            # por ejemplo: cd claude
+cd claude
 pnpm install
 pnpm dev               # http://localhost:5173
 ```
 
-Cada implementación es independiente: no comparten `node_modules` ni configuración. Para comparar dos modelos lado a lado, levantalos en puertos distintos (`pnpm dev --port 5174`).
+Each implementation is independent. Model directories do not share `node_modules` or configuration. To compare two implementations locally, use separate ports:
 
-## Sumar otro modelo al benchmark
+```bash
+pnpm dev --port 5174
+```
 
-¿Querés meter Gemini, Mistral, Qwen, o el que quieras? El flujo está en [`CONTRIBUTING.md`](./CONTRIBUTING.md): abrís un issue con el template "Nuevo modelo", forkeás, copiás el `.ai/` a una carpeta nueva sin tocar los archivos canónicos, y abrís el PR.
+## What the benchmark examines
 
-## Qué se mira
+The benchmark does not determine which model is best. It examines whether implementations:
 
-Esto no es un ranking. No busca decir cuál modelo "es el mejor". Lo que mira son las diferencias cualitativas entre implementaciones partiendo del mismo input:
+- Follow the required anti-pattern restrictions.
+- Interpret the `Given/When/Then` scenarios correctly.
+- Use Svelte 5 runes instead of legacy stores.
+- Implement manual half-up rounding and the canonical currency format.
+- Dynamically import jsPDF rather than importing it at the top level.
+- Make different file naming and component-organization decisions.
 
-- Si respeta los anti-patterns prohibidos o se los saltea
-- Cómo interpreta los scenarios `Given/When/Then`
-- Si organiza componentes con Svelte 5 runes o cae en stores legacy
-- Cómo resuelve el half-up rounding y el formato monetario manual
-- Si importa jsPDF dinámico o lo sube a top-level
-- Cómo nombra y granula los archivos que genera
+## Contribute
 
-## Estado
+To add a model or improve an existing implementation, follow [the contribution guide](./CONTRIBUTING.md).
 
-Los siete tienen el `.ai/` publicado. Las implementaciones se van sumando a medida que cada modelo termina la suya.
+## License
 
-## Licencia
-
-MIT. Ver [`LICENSE`](./LICENSE).
+MIT. See [`LICENSE`](./LICENSE).
