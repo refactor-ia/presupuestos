@@ -1,52 +1,74 @@
-# Contribuir al benchmark
+# Contributing to the Benchmark
 
-Hay dos formas de aportar: **sumar un modelo nuevo** o **mejorar uno que ya está**. El flujo cambia bastante entre uno y otro, así que están separados.
+There are two ways to contribute: **add a new model** or **improve an existing one**. The workflow differs substantially between them, so they are documented separately.
 
-## Sumar un modelo nuevo
+## Required workflow for every contribution
 
-Es la contribución principal: meter un LLM que todavía no está en el benchmark.
+1. Search open and closed issues for duplicates. Add context to an existing issue when appropriate.
+2. Open an issue before any work, including documentation and typos. Every PR requires a prior issue, with no exceptions.
+3. Wait for the `status:approved` label before starting work.
+4. Assign yourself and comment on the issue with your plan.
+5. Fork the repository, then create a branch from `upstream/main` in your personal fork.
+6. Implement and verify the change.
+7. Open a focused PR from your fork to `upstream/main` and include `Closes #N` when the work is complete.
 
-1. **Abrí un issue primero** con el template "Nuevo modelo". Sirve para reservar el modelo y evitar que dos personas trabajen en paralelo sobre lo mismo.
-2. **Forkeá el repo** y creá una branch: `feat/<modelo>` (ej: `feat/gemini`).
-3. **Creá la carpeta** del modelo en la raíz: `mi-modelo/`.
-4. **Copiá el `.ai/` canónico** adentro:
+If scope or requirements are unclear, ask in the issue before starting work. If you stop work, comment with the current state, relevant evidence, and remaining work, then unassign yourself.
+
+## Add a new model
+
+This is the main contribution: add an LLM that is not yet in the benchmark.
+
+1. Open an issue using the "New model" template to reserve the model and prevent duplicate work. Follow the required workflow above before implementation.
+2. In your personal fork, create a branch: `feat/<model>` (for example, `feat/gemini`).
+3. Create the model directory at the repository root: `my-model/`.
+4. Copy the canonical `.ai/` directory into it:
    ```bash
-   cp -r .ai mi-modelo/
+   cp -r .ai my-model/
    ```
-5. **No toques los archivos canónicos del `.ai/` raíz.** Esa es la verdad compartida del benchmark. Si la modificás, el resto de las implementaciones dejan de ser comparables.
-6. **Pasale al modelo el `KICKSTART.md`, la constitución, el spec y el plan.** Que implemente la app en `mi-modelo/` sin ver el resto del repo. La idea es que cada modelo trabaje aislado, igual que los siete que ya están.
-7. **Verificá** que la app levante con `pnpm install && pnpm dev` y que respete los anti-patterns de la constitución.
-8. **Abrí el PR** desde tu fork hacia `main`.
+5. Do not modify the canonical files in the root `.ai/` directory. They are the shared benchmark source of truth. Changing them makes the other implementations no longer comparable.
+6. Give the model `KICKSTART.md`, the constitution, the spec, and the plan. It must implement the app in `my-model/` without seeing the rest of the repository. Each model must work in isolation, like the seven already included.
+7. Verify that the app starts with `pnpm install && pnpm dev` and follows the constitution anti-patterns.
+8. Open the PR from your fork to `upstream/main`.
 
-## Mejorar una implementación existente
+## Improve an existing implementation
 
-Si encontrás un bug o algo que se puede pulir en una de las carpetas ya publicadas:
+If you find a bug or an improvement opportunity in one of the published directories:
 
-1. Abrí un issue con el template "Bug" describiendo el problema y a qué modelo afecta.
-2. Forkeá, branch `fix/<modelo>-<descripcion>` o `refactor/<modelo>-<descripcion>`.
-3. PR hacia `main`.
+1. Search open and closed issues, then open an issue using the "Bug" template that describes the problem and affected model.
+2. Wait for `status:approved`, assign yourself, and comment with your plan before work begins.
+3. In your personal fork, create `fix/<model>-<description>` or `refactor/<model>-<description>` from `upstream/main`.
+4. Open a PR from your fork to `upstream/main`.
 
-Ojo con un matiz: las mejoras son del código generado, no del prompt. La gracia del benchmark es ver lo que cada modelo decidió originalmente, así que si tu cambio altera una decisión de diseño del modelo (no un bug claro), anotalo en la descripción del PR para discutirlo antes del merge.
+Improvements apply to generated code, not prompts. The benchmark exists to show what each model originally decided, so if a change alters a model design decision rather than fixing a clear bug, document it in the PR description for discussion before merge.
 
-## Reglas que aplican a cualquier PR
+## Rules for every PR
 
-- **No tocar el `.ai/` canónico** de la raíz. Solo se modifican subcarpetas.
-- **No tocar carpetas de otros modelos** en un PR de un modelo nuevo. Un PR, un modelo.
-- **Commits en español** con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/): `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`.
-- **Stack fijo:** SvelteKit + Svelte 5 runes + Tailwind v4. No proponer cambios de stack en PRs de implementación.
-- **Anti-patterns:** los enumerados en `.ai/constitution.md` son condición de aprobación. No son sugerencias.
+- Do not modify the canonical root `.ai/` directory. Only subdirectories may be modified.
+- Do not modify other model directories in a PR for a new model. One PR, one model.
+- Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) in English: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`. Do not add `Co-Authored-By` or AI attribution trailers.
+- **Fixed stack:** SvelteKit + Svelte 5 runes + Tailwind v4. Do not propose stack changes in implementation PRs.
+- **Anti-patterns:** those listed in `.ai/constitution.md` are approval requirements, not suggestions.
+- Contributors cannot push, merge, administer, or create upstream repositories. Only `barbatdev` can push to upstream, merge pull requests, or perform administration.
 
-## Setup local
+This repository-specific guide overrides the organization default.
+
+## Local setup
 
 ```bash
-git clone https://github.com/<tu-usuario>/presupuestos
-cd presupuestos/<modelo>
+git clone https://github.com/<your-user>/presupuestos
+cd presupuestos/<model>
 pnpm install
 pnpm dev               # http://localhost:5173
 ```
 
-Cada subcarpeta es un proyecto SvelteKit independiente. No comparten `node_modules`, así que vas a instalar una vez por carpeta que toques.
+Each subdirectory is an independent SvelteKit project. They do not share `node_modules`, so install dependencies once for every directory you modify.
 
-## Dudas
+## Security vulnerabilities
 
-Abrí un issue con label `question` y conversamos ahí.
+Never report security vulnerabilities in public issues, pull requests, or Discord. In the affected repository, open the **Security** tab and select **Report a vulnerability**. Submit the report privately.
+
+Do not include credentials, personal data, or private operational details in repository content, issues, pull requests, comments, or evidence.
+
+## Questions
+
+Open an issue with the `question` label and discuss it there.

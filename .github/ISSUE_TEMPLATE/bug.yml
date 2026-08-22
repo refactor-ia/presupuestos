@@ -1,13 +1,13 @@
-name: Bug en una implementación
-description: Reportar un problema en alguna de las implementaciones publicadas
-title: "[bug][modelo] "
+name: Bug in an implementation
+description: Report a problem in one of the published implementations
+title: "[bug][model] "
 labels: ["bug"]
 body:
   - type: input
     id: modelo
     attributes:
-      label: Modelo afectado
-      description: Carpeta donde está el bug (claude, codex, deepseek, glm, kimi, mimo, minimax, etc.)
+      label: Affected model
+      description: Directory containing the bug (claude, codex, deepseek, glm, kimi, mimo, minimax, etc.)
       placeholder: "claude"
     validations:
       required: true
@@ -15,15 +15,15 @@ body:
   - type: textarea
     id: descripcion
     attributes:
-      label: Qué pasa
-      description: Descripción concreta del problema
+      label: What happens
+      description: A specific description of the problem
     validations:
       required: true
 
   - type: textarea
     id: repro
     attributes:
-      label: Pasos para reproducir
+      label: Steps to reproduce
       placeholder: |
         1. cd claude
         2. pnpm dev
@@ -34,15 +34,15 @@ body:
   - type: textarea
     id: esperado
     attributes:
-      label: Qué debería pasar
-      description: Citar el scenario del spec si aplica (ej: "scenario IVA del .ai/specs/app-presupuestos.yaml")
+      label: Expected behavior
+      description: 'Cite the spec scenario when applicable (for example, "IVA scenario in .ai/specs/app-presupuestos.yaml")'
     validations:
       required: true
 
   - type: textarea
     id: entorno
     attributes:
-      label: Entorno
+      label: Environment
       placeholder: "macOS 15.4, Node 20.11, pnpm 9, Chrome 130"
     validations:
       required: false

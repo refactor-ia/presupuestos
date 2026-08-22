@@ -1,18 +1,18 @@
-name: Nuevo modelo
-description: Sumar un LLM al benchmark
-title: "[modelo] "
+name: New model
+description: Add an LLM to the benchmark
+title: "[model] "
 labels: ["nuevo-modelo"]
 body:
   - type: markdown
     attributes:
       value: |
-        Antes de empezar a implementar, abrí este issue para reservar el modelo y evitar trabajo duplicado.
+        Before implementing, open this issue to reserve the model and prevent duplicate work.
 
   - type: input
     id: modelo
     attributes:
-      label: Modelo
-      description: Nombre y versión del modelo (ej: Gemini 2.5 Pro, Qwen 2.5 Coder 32B)
+      label: Model
+      description: Model name and version (for example, Gemini 2.5 Pro, Qwen 2.5 Coder 32B)
       placeholder: "Gemini 2.5 Pro"
     validations:
       required: true
@@ -20,8 +20,8 @@ body:
   - type: input
     id: vendor
     attributes:
-      label: Vendor
-      description: Quién provee el modelo
+      label: Provider
+      description: Who provides the model
       placeholder: "Google"
     validations:
       required: true
@@ -29,8 +29,8 @@ body:
   - type: input
     id: carpeta
     attributes:
-      label: Nombre de carpeta
-      description: Cómo se va a llamar la subcarpeta del modelo en el repo (lowercase, sin espacios)
+      label: Directory name
+      description: The model subdirectory name in the repository (lowercase, no spaces)
       placeholder: "gemini"
     validations:
       required: true
@@ -38,9 +38,9 @@ body:
   - type: textarea
     id: contexto
     attributes:
-      label: Cómo vas a correr el modelo
-      description: API directa, web UI, IDE, CLI, agente, etc. Ayuda a entender el contexto en el que generó la implementación.
-      placeholder: "API de Google AI Studio, una sola sesión, le paso los 4 archivos del .ai/"
+      label: How you will run the model
+      description: Direct API, web UI, IDE, CLI, agent, etc. This helps explain the context in which the implementation was generated.
+      placeholder: "Google AI Studio API, one session, providing the four files in .ai/"
     validations:
       required: true
 
@@ -49,9 +49,9 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: Voy a copiar `.ai/` a la carpeta sin modificar los archivos canónicos
+        - label: I will copy `.ai/` into the directory without modifying the canonical files
           required: true
-        - label: Voy a respetar los anti-patterns de `.ai/constitution.md`
+        - label: I will follow the anti-patterns in `.ai/constitution.md`
           required: true
-        - label: Voy a verificar que la app levante con `pnpm install && pnpm dev` antes de abrir el PR
+        - label: I will verify that the app starts with `pnpm install && pnpm dev` before opening the PR
           required: true
