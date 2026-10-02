@@ -14,12 +14,12 @@ import type { RequestHandler } from './$types';
 import {
 	UPSTREAM_URL,
 	buildUpstreamBody,
+	flushUpstreamBuffer,
 	doneEvent,
 	extractCompleteLines,
-	invalidEvent,
-	itemEvent,
+	initialPumpState,
 	normalizeParseText,
-	parseItemLine
+	processUpstreamLines
 } from '$lib/server/parse';
 import {
 	GENERIC_ERROR_CODE,
@@ -73,7 +73,10 @@ export const POST: RequestHandler = async ({ request }) => {
 	const stream = new ReadableStream<Uint8Array>({
 		async start(controller) {
 			const encoder = new TextEncoder();
-			let buffer = '';
+			// Raw upstream SSE text not yet terminated by a newline.
+			let sseBuffer = '';
+			// Pump state: accumulated model NDJSON text + [DONE] flag.
+			let pump = initialPumpState();
 			try {
 				const reader = upstream.body!.getReader();
 				const decoder = new TextDecoder();
@@ -82,21 +85,25 @@ export const POST: RequestHandler = async ({ request }) => {
 					if (done) {
 						break;
 					}
-					buffer += decoder.decode(value, { stream: true });
-					const { lines, rest } = extractCompleteLines(buffer);
-					buffer = rest;
-					for (const line of lines) {
-						if (line.trim() === '') {
-							continue;
-						}
-						const parsed = parseItemLine(line);
-						const frame = parsed.ok
-							? itemEvent(parsed.item)
-							: invalidEvent(line, parsed.reason);
+					sseBuffer += decoder.decode(value, { stream: true });
+					const { lines, rest } = extractCompleteLines(sseBuffer);
+					sseBuffer = rest;
+					const batch = processUpstreamLines(lines, pump);
+					pump = batch.state;
+					for (const frame of batch.events) {
 						controller.enqueue(encoder.encode(frame));
+					}
+					if (pump.finished) {
+						break;
 					}
 				}
 			} finally {
+				// Upstream end or [DONE]: emit the model's final NDJSON line
+				// (it may lack a trailing newline), then the terminal event.
+				const flush = flushUpstreamBuffer(pump);
+				for (const frame of flush.events) {
+					controller.enqueue(encoder.encode(frame));
+				}
 				controller.enqueue(encoder.encode(doneEvent()));
 				controller.close();
 			}

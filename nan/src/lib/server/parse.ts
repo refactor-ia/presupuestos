@@ -89,6 +89,133 @@ export function extractCompleteLines(buffer: string): { lines: string[]; rest: s
 	return { lines, rest: normalized.slice(lastNewline + 1) };
 }
 
+/**
+ * Strip a leading SSE `data:` prefix (with or without the trailing space)
+ * and return the trimmed remainder. Lines without the prefix are returned
+ * as-is (trimmed), so bare JSON payloads still parse.
+ */
+function stripDataPrefix(line: string): string {
+	const trimmed = line.trim();
+	return trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+}
+
+/**
+ * True when an upstream SSE line is the OpenAI `[DONE]` stream sentinel.
+ */
+export function isUpstreamDone(upstreamLine: string): boolean {
+	return stripDataPrefix(upstreamLine) === '[DONE]';
+}
+
+/**
+ * Extract the model text carried by one raw upstream SSE line.
+ *
+ * Upstream lines are OpenAI chat-completions chunks
+ * (`data: {"choices":[{"delta":{"content":"..."}}]}`), not the model's
+ * NDJSON itself. Returns the accumulated content string for a chunk with a
+ * non-empty `choices[0].delta.content`, the empty string for a valid chunk
+ * with empty or absent content, and null for anything that carries no model
+ * text and must be ignored silently: empty lines, `[DONE]`, SSE comment
+ * keep-alives (`: ping`) and unparseable payloads.
+ */
+export function extractDeltaContent(upstreamLine: string): string | null {
+	const trimmed = upstreamLine.trim();
+	if (trimmed === '' || trimmed.startsWith(':')) {
+		return null;
+	}
+	const payload = stripDataPrefix(trimmed);
+	if (payload === '[DONE]') {
+		return null;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(payload);
+	} catch {
+		return null;
+	}
+	if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		return null;
+	}
+	const chunk = parsed as { choices?: { delta?: { content?: unknown } }[] };
+	const content = chunk.choices?.[0]?.delta?.content;
+	return typeof content === 'string' ? content : '';
+}
+
+/** Immutable-ish pump state threaded through the upstream-line reducer. */
+export type PumpState = {
+	/** Accumulated model NDJSON text not yet terminated by a newline. */
+	ndjson: string;
+	/** True once the upstream `[DONE]` sentinel has been seen. */
+	finished: boolean;
+};
+
+/** Initial pump state: empty NDJSON buffer, stream not finished. */
+export function initialPumpState(): PumpState {
+	return { ndjson: '', finished: false };
+}
+
+/** Result of feeding a batch of raw upstream lines through the pump. */
+export type PumpBatchResult = {
+	/** Downstream SSE frames (item/invalid) emitted for completed NDJSON lines. */
+	events: string[];
+	/** The pump state after this batch. */
+	state: PumpState;
+};
+
+/**
+ * Pure reducer for the upstream pump: feed raw upstream SSE lines, get the
+ * downstream item/invalid frames plus the next state.
+ *
+ * Each upstream chunk line is decoded via `extractDeltaContent` and its
+ * content appended to the model NDJSON buffer; every completed NDJSON line
+ * is then parsed and validated with `parseItemLine`. `[DONE]` and anything
+ * after it stop the pump without emitting frames; non-text lines are
+ * ignored silently.
+ */
+export function processUpstreamLines(lines: string[], state: PumpState): PumpBatchResult {
+	if (state.finished) {
+		return { events: [], state };
+	}
+	const events: string[] = [];
+	let ndjson = state.ndjson;
+	let finished = false;
+	for (const upstreamLine of lines) {
+		if (isUpstreamDone(upstreamLine)) {
+			finished = true;
+			break;
+		}
+		const content = extractDeltaContent(upstreamLine);
+		if (content === null) {
+			continue;
+		}
+		ndjson += content;
+		const completed = extractCompleteLines(ndjson);
+		ndjson = completed.rest;
+		for (const line of completed.lines) {
+			if (line.trim() === '') {
+				continue;
+			}
+			const parsed = parseItemLine(line);
+			events.push(parsed.ok ? itemEvent(parsed.item) : invalidEvent(line, parsed.reason));
+		}
+	}
+	return { events, state: { ndjson, finished } };
+}
+
+/**
+ * Flush the pump at upstream end or `[DONE]`: emit any remaining buffered
+ * NDJSON line (the model's final line may lack a trailing newline) and mark
+ * the pump finished. An empty or blank buffer emits nothing.
+ */
+export function flushUpstreamBuffer(state: PumpState): PumpBatchResult {
+	const trailing = state.ndjson.trim();
+	if (trailing === '') {
+		return { events: [], state: { ndjson: '', finished: true } };
+	}
+	const parsed = parseItemLine(state.ndjson);
+	const event = parsed.ok ? itemEvent(parsed.item) : invalidEvent(state.ndjson, parsed.reason);
+	return { events: [event], state: { ndjson: '', finished: true } };
+}
+
 export type ParsedItemLine = { ok: true; item: BudgetItem } | { ok: false; reason: ErrorCode };
 
 /**

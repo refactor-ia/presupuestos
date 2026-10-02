@@ -3,14 +3,20 @@ import type { BudgetItem } from '$lib/domain/validate';
 import {
 	buildUpstreamBody,
 	extractCompleteLines,
+	extractDeltaContent,
+	flushUpstreamBuffer,
+	initialPumpState,
+	isUpstreamDone,
 	itemEvent,
 	invalidEvent,
 	doneEvent,
 	normalizeParseText,
 	parseItemLine,
+	processUpstreamLines,
 	SYSTEM_PROMPT,
 	UPSTREAM_URL
 } from './parse';
+import type { PumpState } from './parse';
 
 /**
  * Pure-logic tests for the /api/parse pipeline: SSE chunk buffering, NDJSON
@@ -134,6 +140,145 @@ describe('event builders', () => {
 	it('doneEvent emits the terminal frame', () => {
 		const payload = JSON.parse(doneEvent().slice('data: '.length)) as { type: string };
 		expect(payload).toEqual({ type: 'done' });
+	});
+});
+
+/** Parse the JSON payload out of a downstream SSE frame for assertions. */
+function framePayload(frame: string): Record<string, unknown> {
+	return JSON.parse(frame.slice('data: '.length)) as Record<string, unknown>;
+}
+
+/** Wrap one model NDJSON line into a realistic OpenAI chunk line. */
+function chunkLine(content: string): string {
+	return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}`;
+}
+
+describe('extractDeltaContent', () => {
+	it('extracts the delta content from a standard chat-completions chunk', () => {
+		const modelLine = '{"description":"Pintura"}';
+		expect(
+			extractDeltaContent(
+				`data: ${JSON.stringify({ choices: [{ delta: { content: modelLine } }] })}`
+			)
+		).toBe(modelLine);
+	});
+
+	it('strips a `data:` prefix without the space', () => {
+		expect(extractDeltaContent('data:{"choices":[{"delta":{"content":"x"}}]}')).toBe('x');
+	});
+
+	it('returns the empty string for valid chunks with empty or absent content', () => {
+		expect(extractDeltaContent(chunkLine(''))).toBe('');
+		expect(extractDeltaContent('data: {"choices":[{"delta":{}}]}')).toBe('');
+		expect(extractDeltaContent('data: {"choices":[]}')).toBe('');
+	});
+
+	it('returns null for empty lines, [DONE], keep-alive comments and unparseable payloads', () => {
+		expect(extractDeltaContent('')).toBeNull();
+		expect(extractDeltaContent('   ')).toBeNull();
+		expect(extractDeltaContent('data: [DONE]')).toBeNull();
+		expect(extractDeltaContent(': ping')).toBeNull();
+		expect(extractDeltaContent('data: {not json')).toBeNull();
+		expect(extractDeltaContent('data: 42')).toBeNull();
+	});
+});
+
+describe('isUpstreamDone', () => {
+	it('recognizes the [DONE] sentinel with or without the data prefix', () => {
+		expect(isUpstreamDone('data: [DONE]')).toBe(true);
+		expect(isUpstreamDone('data:[DONE]')).toBe(true);
+		expect(isUpstreamDone('[DONE]')).toBe(true);
+		expect(isUpstreamDone('data: {"choices":[]}')).toBe(false);
+		expect(isUpstreamDone(': ping')).toBe(false);
+	});
+});
+
+describe('processUpstreamLines', () => {
+	it('reassembles model content spanning two chunks into one item event', () => {
+		let state: PumpState = initialPumpState();
+		const first = processUpstreamLines(
+			[chunkLine('{"description":"Pintura l'), chunkLine('átex","quantity":2,')],
+			state
+		);
+		state = first.state;
+		expect(first.events).toEqual([]);
+		const second = processUpstreamLines(
+			[chunkLine('"unitPriceCents":100}\n'), chunkLine('')],
+			state
+		);
+		state = second.state;
+		expect(second.events).toHaveLength(1);
+		expect(framePayload(second.events[0])).toEqual({
+			type: 'item',
+			item: { description: 'Pintura látex', quantity: 2, unitPriceCents: 100 }
+		});
+		expect(state.finished).toBe(false);
+		expect(state.ndjson).toBe('');
+	});
+
+	it('emits an invalid event with QUANTITY_INVALID for quantity-0 content', () => {
+		const line = JSON.stringify({
+			description: 'Pintura',
+			quantity: 0,
+			unitPriceCents: 100
+		});
+		const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+		expect(result.events).toHaveLength(1);
+		expect(framePayload(result.events[0])).toEqual({ type: 'invalid', line, reason: 'QUANTITY_INVALID' });
+	});
+
+	it('handles a realistic mixed stream: keep-alive, garbage line, items, [DONE]', () => {
+		const goodLine = JSON.stringify({ description: 'Clavos', quantity: 1, unitPriceCents: 500 });
+		const result = processUpstreamLines(
+			[
+				': ping',
+				chunkLine(`${goodLine}\n`),
+				'data: {not json',
+				'data: [DONE]'
+			],
+			initialPumpState()
+		);
+		expect(result.events).toHaveLength(1);
+		expect(framePayload(result.events[0])).toEqual({
+			type: 'item',
+			item: { description: 'Clavos', quantity: 1, unitPriceCents: 500 }
+		});
+		expect(result.state.finished).toBe(true);
+		// No spurious invalid event for the keep-alive, the garbage chunk or [DONE].
+		expect(result.events.some((frame) => framePayload(frame).type === 'invalid')).toBe(false);
+	});
+
+	it('stops processing lines after [DONE]', () => {
+		const line = JSON.stringify({ description: 'Tornillos', quantity: 4, unitPriceCents: 50 });
+		const result = processUpstreamLines(
+			['data: [DONE]', chunkLine(`${line}\n`)],
+			initialPumpState()
+		);
+		expect(result.events).toEqual([]);
+		expect(result.state.finished).toBe(true);
+	});
+});
+
+describe('flushUpstreamBuffer', () => {
+	it('flushes the trailing complete NDJSON line and resets the state', () => {
+		let state: PumpState = initialPumpState();
+		state = processUpstreamLines(
+			[chunkLine('{"description":"Pintura","quantity":1,"unitPriceCents":100}')],
+			state
+		).state;
+		const flush = flushUpstreamBuffer(state);
+		expect(flush.events).toHaveLength(1);
+		expect(framePayload(flush.events[0])).toEqual({
+			type: 'item',
+			item: { description: 'Pintura', quantity: 1, unitPriceCents: 100 }
+		});
+		expect(flush.state.ndjson).toBe('');
+		expect(flush.state.finished).toBe(true);
+	});
+
+	it('emits nothing when the buffer is empty', () => {
+		const flush = flushUpstreamBuffer(initialPumpState());
+		expect(flush.events).toEqual([]);
 	});
 });
 
