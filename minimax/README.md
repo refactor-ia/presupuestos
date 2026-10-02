@@ -1,7 +1,8 @@
-# minimax
+# MiniMax
 
-Implementación de la app de presupuestos por **MiniMax**.
+Este directorio corresponde al participante MiniMax (`minimax/`).
 
-Estado: pendiente de implementación.
-
-Input: SDD compartido (spec + plan + tasks) generado en el root del proyecto.
+- Entrada local: `.ai/KICKSTART.md`.
+- Los insumos canónicos están copiados de forma aislada en `.ai/`.
+- Estado: v4 DRAFT; la implementación permanece pendiente.
+- El entorno común, el lockfile y la configuración de proveedor quedan diferidos.

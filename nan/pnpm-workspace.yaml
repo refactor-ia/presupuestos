@@ -1,0 +1,5 @@
+allowBuilds:
+  # core-js is a transitive dep of jspdf (via canvg); its postinstall is a
+  # funding banner with no functional effect. Explicitly disabled for
+  # deterministic installs across participant runs.
+  core-js: false

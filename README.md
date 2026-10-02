@@ -1,4 +1,4 @@
-# Presupuestos: seven-model LLM benchmark
+# Presupuestos: eight-model LLM benchmark
 
 One budget calculator, one specification, and one set of constraints. Seven models implement the same application independently in separate directories, without seeing one another's work.
 
@@ -29,6 +29,7 @@ The canonical `.ai` content remains in Spanish by benchmark design. It is the sh
 | Kimi | Moonshot | [`kimi/`](./kimi/) |
 | MiMo | Xiaomi | [`mimo/`](./mimo/) |
 | MiniMax | MiniMax | [`minimax/`](./minimax/) |
+| Nan | Nan | [`nan/`](./nan/) |
 
 Each model works from its own copy of `.ai/` and implements only inside its own directory. In the current tracked tree, every model directory contains its `.ai/` copy and `README.md`; no SvelteKit implementation files or project manifests are tracked yet.
 
@@ -36,12 +37,14 @@ Each model works from its own copy of `.ai/` and implements only inside its own 
 
 - **Framework:** SvelteKit with Svelte 5 runes, including `$state`, `$derived`, and `$effect`.
 - **Styling:** Tailwind v4 configured in `app.css` with `@theme`. Do not add `tailwind.config.js`.
-- **PDF:** Load jsPDF dynamically inside the export handler. A top-level import can break prerendering.
+- **PDF:** Load jsPDF inside the export handler. A dynamic import is the safest; a top-level import requires SSR to be disabled.
 - **Rounding:** Implement half-up rounding manually for critical values. Do not use `toFixed` or `Math.round` for critical rounding.
-- **Currency:** Use a custom formatter. `Intl.NumberFormat` is forbidden. The exact format is `$ ` followed by an integer, a period, and exactly two decimals: `$ 1234.50`.
-- **Number input:** Use a period as the decimal separator. Comma-decimal input is invalid.
+- **Currency:** Format with a period as the thousands separator and a comma as the decimal separator, always two decimals: `$ 4.143.420,00` (below 1,000 the pattern is `$ 39,42`). Any presentation API (custom formatter or `Intl`) is allowed only if the byte-exact contract is preserved.
+- **Number input:** Accept a period or a comma as the decimal separator. Thousands separators (`1.234` with three decimals) are invalid.
 - **Dates:** Use `es-UY` only for date display. It does not control currency or number output.
 - **VAT:** Apply IVA 22% to the total subtotal, using manual half-up rounding to two decimals.
+- **Session identity:** The random `PRES-XXXXXX` id must be generated on the client (or otherwise stable): the user must never see an id that is later replaced. Verify against the evaluator's real URL, including insecure HTTP.
+- **Delivery gate:** The QA matrix (T-01..T-06 in `constitution.md`) must be green before delivery; one red blocks the delivery.
 
 The prohibited anti-patterns in [`.ai/constitution.md`](./.ai/constitution.md) are benchmark requirements, not suggestions.
 
