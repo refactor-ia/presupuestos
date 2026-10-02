@@ -22,9 +22,6 @@ interface ExecFileSyncOptions {
 type ExecFileSync = (command: string, args: string[], options: ExecFileSyncOptions) => string;
 type SpawnSync = (command: string, args: string[]) => SpawnSyncResult;
 
-// @ts-expect-error — node:child_process has no static types in this toolchain
-// (no @types/node, frozen tsconfig); the cast below is the single source of
-// truth for the surface used here.
 const childProcess = (await import('node:child_process')) as {
 	execFileSync: ExecFileSync;
 	spawnSync: SpawnSync;
