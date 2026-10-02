@@ -5,6 +5,9 @@
 	import TextField from '$lib/components/TextField.svelte';
 	import ItemsTable from '$lib/components/ItemsTable.svelte';
 	import Totals from '$lib/components/Totals.svelte';
+	import ParsePanel from '$lib/components/ParsePanel.svelte';
+	import BudgetPicker from '$lib/components/BudgetPicker.svelte';
+	import { ApiError, saveBudget, type Budget } from '$lib/client/api';
 	import { formatLongDate } from '$lib/date';
 	import { motionDuration } from '$lib/motion';
 	import { exportBudgetPdf } from '$lib/pdf/generate';
@@ -115,6 +118,7 @@
 		const quantityCode = validateItemQuantity(itemQuantity);
 		const priceCode = validateItemUnitPrice(itemUnitPrice);
 		if (descriptionCode !== null || quantityCode !== null || priceCode !== null) return;
+		resetSaveFeedback();
 		items.push({
 			description: itemDescription.trim(),
 			// Grammar-validated above; these parses cannot fail here.
@@ -133,9 +137,83 @@
 	}
 
 	function handleRemoveItem(index: number): void {
+		resetSaveFeedback();
 		items.splice(index, 1);
 		rowKeys.splice(index, 1);
 		descriptionInput?.focus(); // the removed button is gone; land focus on a usable field
+	}
+
+	// --- Parse stream (natural language → items) and saved budgets ----------
+
+	// INV-08 analog for saving: any budget change makes a visible save
+	// confirmation obsolete, so it is cleared on every mutation. A save that is
+	// currently in flight keeps its state (its outcome lands afterwards).
+	function resetSaveFeedback(): void {
+		if (savePhase !== 'busy') {
+			savePhase = 'idle';
+			saveErrorText = null;
+		}
+	}
+
+	/** Appends one streamed item to the table. The MAX_ITEMS cap is respected:
+	 *  once reached, further streamed items are dropped and the existing
+	 *  item-limit reserved slot shows ITEM_LIMIT_REACHED (messages.ts). */
+	function handleParsedItem(item: BudgetItem): void {
+		resetSaveFeedback();
+		if (validateItemLimit(items.length) !== null) return;
+		items.push({ ...item });
+		rowKeys.push(++rowKeySeq);
+	}
+
+	/** Replaces the form state with a saved budget. The session-generated
+	 *  number stays the session's own (RQ-01): the loaded budget's number is
+	 *  deliberately NOT copied. The PDF flow keeps working untouched. */
+	function handleLoadBudget(budget: Budget): void {
+		clientName = budget.clientName;
+		clientEmail = budget.email;
+		clientAddress = budget.address;
+		clientRut = budget.rut;
+		items = budget.items.map((item) => ({ ...item }));
+		rowKeys = items.map(() => ++rowKeySeq);
+		// Values just loaded are valid; clear blur-touched errors.
+		nameTouched = false;
+		emailTouched = false;
+		addressTouched = false;
+		rutTouched = false;
+		resetSaveFeedback();
+	}
+
+	let picker = $state<BudgetPicker | null>(null);
+	let savePhase = $state<'idle' | 'busy' | 'success' | 'error'>('idle');
+	let saveErrorText = $state<string | null>(null);
+	const SAVE_SUCCESS_TEXT = 'Presupuesto guardado.';
+	const SAVE_ERROR_FALLBACK = 'No se pudo guardar el presupuesto. Probá de nuevo.';
+
+	const saveBusy = $derived(savePhase === 'busy');
+	const canSave = $derived(presId !== null && items.length > 0 && !clientInvalid);
+
+	async function handleSave(): Promise<void> {
+		if (presId === null || savePhase === 'busy') return;
+		savePhase = 'busy';
+		saveErrorText = null;
+		try {
+			await saveBudget({
+				number: presId,
+				clientName: clientName.trim(),
+				email: clientEmail.trim(),
+				address: clientAddress.trim(),
+				rut: clientRut.trim(),
+				items: items.map((item) => ({ ...item }))
+			});
+			savePhase = 'success';
+			picker?.refresh(); // the saved budget appears in the list immediately
+		} catch (error) {
+			// The API surfaces the Spanish { code, message } contract: render its
+			// message directly, falling back to a generic text when unreachable.
+			saveErrorText =
+				error instanceof ApiError && error.message !== '' ? error.message : SAVE_ERROR_FALLBACK;
+			savePhase = 'error';
+		}
 	}
 
 	// Display rows for the table: items plus their stable transition key.
@@ -468,6 +546,87 @@
 						<p id={exportHintId} class="field-error" aria-live="polite">{exportHint ?? ''}</p>
 					{/if}
 				</div>
+			</div>
+		</section>
+	</div>
+
+	<div class="mt-6 grid items-start gap-6 lg:grid-cols-2">
+		<section class="card min-w-0" aria-labelledby="parse-heading">
+			<h2 id="parse-heading" class="card-title">Analizar texto</h2>
+			<p class="hint-text mb-4">
+				Escribí lo que necesita el cliente y los ítems se agregan a la tabla mientras se analizan.
+			</p>
+			<ParsePanel onitem={handleParsedItem} />
+		</section>
+
+		<section class="card min-w-0" aria-labelledby="saved-heading">
+			<h2 id="saved-heading" class="card-title">Guardar y cargar</h2>
+			<p class="hint-text mb-4">
+				Guardá el presupuesto actual con su número {presId ?? 'PRES-······'} o cargá uno guardado
+				para seguir trabajando con esos datos.
+			</p>
+			<button
+				type="button"
+				class="btn btn-primary w-full"
+				onclick={handleSave}
+				disabled={!canSave || saveBusy}
+				aria-busy={saveBusy}
+			>
+				{#if saveBusy}
+					<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+						<circle
+							class="opacity-25"
+							cx="12"
+							cy="12"
+							r="10"
+							stroke="currentColor"
+							stroke-width="4"
+						/>
+						<path
+							class="opacity-90"
+							fill="currentColor"
+							d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
+						/>
+					</svg>
+					Guardando…
+				{:else}
+					Guardar
+				{/if}
+			</button>
+			<!-- Reserved slot: save feedback swaps in place without shifting layout. -->
+			<div class="mt-1 min-h-5">
+				{#if savePhase === 'success'}
+					<p
+						class="flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400"
+						role="status"
+						in:fly={{ y: 4, duration: motionDuration(200) }}
+					>
+						<svg
+							class="size-4 shrink-0"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M20 6 9 17l-5-5" />
+						</svg>
+						<span>{SAVE_SUCCESS_TEXT}</span>
+					</p>
+				{:else if savePhase === 'error'}
+					<p
+						class="text-sm text-red-600 dark:text-red-400"
+						role="alert"
+						in:fly={{ y: 4, duration: motionDuration(200) }}
+					>
+						{saveErrorText}
+					</p>
+				{/if}
+			</div>
+			<div class="mt-6">
+				<BudgetPicker bind:this={picker} onload={handleLoadBudget} />
 			</div>
 		</section>
 	</div>
