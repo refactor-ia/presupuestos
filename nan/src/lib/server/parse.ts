@@ -17,6 +17,7 @@
 import { parsePriceToCents } from '$lib/domain/money';
 import {
 	parseQuantity,
+	validateClientName,
 	validateItemDescription,
 	validateItemQuantity,
 	validateItemUnitPrice
@@ -39,6 +40,7 @@ const GENERIC_ERROR_CODE: ErrorCode = 'EXPORT_CLIENT_INVALID';
 export const SYSTEM_PROMPT = [
 	'You convert a natural-language budget request (Spanish) into budget items.',
 	'Output ONLY newline-delimited JSON objects: one budget item per line, no prose, no code fences, no blank lines.',
+	'If the request mentions a client name (who the budget is for), ALSO output one extra line `{"client":"<name>"}` (single "client" string field, the person or company name only, no honorifics added) at most once; every other line stays a budget item.',
 	'Each object has exactly three fields:',
 	'- "description": string in Spanish, what is being bought, at most 240 characters.',
 	'- "quantity": integer 1..9999.',
@@ -146,16 +148,18 @@ export type PumpState = {
 	ndjson: string;
 	/** True once the upstream `[DONE]` sentinel has been seen. */
 	finished: boolean;
+	/** True once a valid client line has produced a client event (first wins). */
+	clientSeen: boolean;
 };
 
-/** Initial pump state: empty NDJSON buffer, stream not finished. */
+/** Initial pump state: empty NDJSON buffer, stream not finished, no client yet. */
 export function initialPumpState(): PumpState {
-	return { ndjson: '', finished: false };
+	return { ndjson: '', finished: false, clientSeen: false };
 }
 
 /** Result of feeding a batch of raw upstream lines through the pump. */
 export type PumpBatchResult = {
-	/** Downstream SSE frames (item/invalid) emitted for completed NDJSON lines. */
+	/** Downstream SSE frames (client/item/invalid) emitted for completed NDJSON lines. */
 	events: string[];
 	/** The pump state after this batch. */
 	state: PumpState;
@@ -163,13 +167,13 @@ export type PumpBatchResult = {
 
 /**
  * Pure reducer for the upstream pump: feed raw upstream SSE lines, get the
- * downstream item/invalid frames plus the next state.
+ * downstream client/item/invalid frames plus the next state.
  *
  * Each upstream chunk line is decoded via `extractDeltaContent` and its
  * content appended to the model NDJSON buffer; every completed NDJSON line
- * is then parsed and validated with `parseItemLine`. `[DONE]` and anything
- * after it stop the pump without emitting frames; non-text lines are
- * ignored silently.
+ * is then classified (client mention vs budget item), parsed and validated.
+ * `[DONE]` and anything after it stop the pump without emitting frames;
+ * non-text lines are ignored silently.
  */
 export function processUpstreamLines(lines: string[], state: PumpState): PumpBatchResult {
 	if (state.finished) {
@@ -177,6 +181,7 @@ export function processUpstreamLines(lines: string[], state: PumpState): PumpBat
 	}
 	const events: string[] = [];
 	let ndjson = state.ndjson;
+	let clientSeen = state.clientSeen;
 	let finished = false;
 	for (const upstreamLine of lines) {
 		if (isUpstreamDone(upstreamLine)) {
@@ -194,11 +199,26 @@ export function processUpstreamLines(lines: string[], state: PumpState): PumpBat
 			if (line.trim() === '') {
 				continue;
 			}
+			if (isClientLine(line)) {
+				if (clientSeen) {
+					// First valid client line wins: later client lines are
+					// ignored silently, never emitted as invalid.
+					continue;
+				}
+				const parsedClient = parseClientLine(line);
+				if (parsedClient.ok) {
+					events.push(clientEvent(parsedClient.name));
+					clientSeen = true;
+				} else {
+					events.push(invalidEvent(line, parsedClient.reason));
+				}
+				continue;
+			}
 			const parsed = parseItemLine(line);
 			events.push(parsed.ok ? itemEvent(parsed.item) : invalidEvent(line, parsed.reason));
 		}
 	}
-	return { events, state: { ndjson, finished } };
+	return { events, state: { ndjson, finished, clientSeen } };
 }
 
 /**
@@ -209,14 +229,89 @@ export function processUpstreamLines(lines: string[], state: PumpState): PumpBat
 export function flushUpstreamBuffer(state: PumpState): PumpBatchResult {
 	const trailing = state.ndjson.trim();
 	if (trailing === '') {
-		return { events: [], state: { ndjson: '', finished: true } };
+		return { events: [], state: { ndjson: '', finished: true, clientSeen: state.clientSeen } };
+	}
+	if (isClientLine(trailing)) {
+		if (state.clientSeen) {
+			return { events: [], state: { ndjson: '', finished: true, clientSeen: true } };
+		}
+		const parsedClient = parseClientLine(trailing);
+		const event = parsedClient.ok
+			? clientEvent(parsedClient.name)
+			: invalidEvent(trailing, parsedClient.reason);
+		return {
+			events: [event],
+			state: { ndjson: '', finished: true, clientSeen: parsedClient.ok }
+		};
 	}
 	const parsed = parseItemLine(state.ndjson);
 	const event = parsed.ok ? itemEvent(parsed.item) : invalidEvent(state.ndjson, parsed.reason);
-	return { events: [event], state: { ndjson: '', finished: true } };
+	return {
+		events: [event],
+		state: { ndjson: '', finished: true, clientSeen: state.clientSeen }
+	};
 }
 
 export type ParsedItemLine = { ok: true; item: BudgetItem } | { ok: false; reason: ErrorCode };
+
+export type ParsedClientLine = { ok: true; name: string } | { ok: false; reason: ErrorCode };
+
+/**
+ * True when a parsed NDJSON line is a client mention: an object carrying a
+ * string `client` field and none of the item fields. An object mixing
+ * `client` with item fields is a budget item line, not a client mention.
+ */
+function isClientMentionObject(parsed: unknown): boolean {
+	if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		return false;
+	}
+	const source = parsed as Record<string, unknown>;
+	return (
+		typeof source.client === 'string' &&
+		!('description' in source) &&
+		!('quantity' in source) &&
+		!('unitPriceCents' in source)
+	);
+}
+
+/**
+ * True when one complete NDJSON line is a client mention line. Unparseable
+ * JSON and item-shaped lines are not client lines (they go down the item
+ * path, where they surface their own validation reasons).
+ */
+export function isClientLine(line: string): boolean {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch {
+		return false;
+	}
+	return isClientMentionObject(parsed);
+}
+
+/**
+ * Parse one complete client mention line, reusing the shared
+ * `validateClientName` exactly as budgets.ts does. Callers must classify the
+ * line with `isClientLine` first; a non-client line shares the generic
+ * client-data code (same documented deviation as http.ts).
+ */
+export function parseClientLine(line: string): ParsedClientLine {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch {
+		return { ok: false, reason: GENERIC_ERROR_CODE };
+	}
+	if (!isClientMentionObject(parsed)) {
+		return { ok: false, reason: GENERIC_ERROR_CODE };
+	}
+	const name = ((parsed as Record<string, unknown>).client as string).trim();
+	const error = validateClientName(name);
+	if (error !== null) {
+		return { ok: false, reason: error };
+	}
+	return { ok: true, name };
+}
 
 /**
  * Parse one complete NDJSON line as a budget item, reusing the shared domain
@@ -291,6 +386,11 @@ export function itemEvent(item: BudgetItem): string {
 /** Downstream SSE frame for an unparseable or invalid line (never fatal). */
 export function invalidEvent(line: string, reason: ErrorCode): string {
 	return `${FRAME_PREFIX}${JSON.stringify({ type: 'invalid', line, reason })}\n\n`;
+}
+
+/** Downstream SSE frame for a validated client mention (at most once per stream). */
+export function clientEvent(name: string): string {
+	return `${FRAME_PREFIX}${JSON.stringify({ type: 'client', client: { name } })}\n\n`;
 }
 
 /** Downstream SSE terminal frame: upstream finished. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BudgetItem } from '$lib/domain/validate';
 import {
 	buildUpstreamBody,
+	clientEvent,
 	extractCompleteLines,
 	extractDeltaContent,
 	flushUpstreamBuffer,
@@ -11,6 +12,7 @@ import {
 	invalidEvent,
 	doneEvent,
 	normalizeParseText,
+	parseClientLine,
 	parseItemLine,
 	processUpstreamLines,
 	SYSTEM_PROMPT,
@@ -114,6 +116,35 @@ describe('parseItemLine', () => {
 	});
 });
 
+/**
+ * Client mention lines: an NDJSON object with a single string `client` field
+ * (no item fields). A line mixing `client` with item fields is an item line.
+ */
+describe('parseClientLine', () => {
+	it('parses a valid client line and trims the name', () => {
+		expect(parseClientLine('{"client":"  Leo Bidi "}')).toEqual({ ok: true, name: 'Leo Bidi' });
+	});
+
+	it('rejects an empty (whitespace) client name with CLIENT_NAME_REQUIRED', () => {
+		expect(parseClientLine('{"client":"   "}')).toEqual({
+			ok: false,
+			reason: 'CLIENT_NAME_REQUIRED'
+		});
+	});
+
+	it('rejects a name over 120 characters with CLIENT_NAME_TOO_LONG', () => {
+		expect(parseClientLine(JSON.stringify({ client: 'a'.repeat(121) }))).toEqual({
+			ok: false,
+			reason: 'CLIENT_NAME_TOO_LONG'
+		});
+	});
+
+	it('accepts a name of exactly 120 characters', () => {
+		const name = 'a'.repeat(120);
+		expect(parseClientLine(JSON.stringify({ client: name }))).toEqual({ ok: true, name });
+	});
+});
+
 describe('event builders', () => {
 	it('itemEvent emits one SSE data frame with the item payload', () => {
 		const frame = itemEvent(validItem);
@@ -140,6 +171,17 @@ describe('event builders', () => {
 	it('doneEvent emits the terminal frame', () => {
 		const payload = JSON.parse(doneEvent().slice('data: '.length)) as { type: string };
 		expect(payload).toEqual({ type: 'done' });
+	});
+
+	it('clientEvent emits one SSE data frame with the trimmed client name', () => {
+		const frame = clientEvent('Leo Bidi');
+		expect(frame.endsWith('\n\n')).toBe(true);
+		expect(frame.startsWith('data: ')).toBe(true);
+		const payload = JSON.parse(frame.slice('data: '.length)) as {
+			type: string;
+			client: { name: string };
+		};
+		expect(payload).toEqual({ type: 'client', client: { name: 'Leo Bidi' } });
 	});
 });
 
@@ -257,6 +299,122 @@ describe('processUpstreamLines', () => {
 		expect(result.events).toEqual([]);
 		expect(result.state.finished).toBe(true);
 	});
+
+	/** Extract the client-event payloads (if any) from emitted frames. */
+	function clientPayloads(events: string[]): Record<string, unknown>[] {
+		return events.map(framePayload).filter((payload) => payload.type === 'client');
+	}
+
+	describe('client mention lines', () => {
+		it('emits a client event for a valid client line, trimming the name', () => {
+			const result = processUpstreamLines(
+				[chunkLine('{"client":"  Leo Bidi "}\n')],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'client',
+				client: { name: 'Leo Bidi' }
+			});
+			expect(result.state.clientSeen).toBe(true);
+		});
+
+		it('emits an invalid event with CLIENT_NAME_TOO_LONG for an over-long name', () => {
+			const line = JSON.stringify({ client: 'a'.repeat(121) });
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line,
+				reason: 'CLIENT_NAME_TOO_LONG'
+			});
+			expect(result.state.clientSeen).toBe(false);
+		});
+
+		it('emits an invalid event with CLIENT_NAME_REQUIRED for an empty name', () => {
+			const line = JSON.stringify({ client: '   ' });
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line,
+				reason: 'CLIENT_NAME_REQUIRED'
+			});
+		});
+
+		it('ignores later client lines after the first valid one (first valid wins)', () => {
+			const result = processUpstreamLines(
+				[chunkLine('{"client":"Leo Bidi"}\n'), chunkLine('{"client":"Otro Cliente"}\n')],
+				initialPumpState()
+			);
+			expect(clientPayloads(result.events)).toEqual([
+				{ type: 'client', client: { name: 'Leo Bidi' } }
+			]);
+			expect(result.events).toHaveLength(1); // no invalid event for the later line
+		});
+
+		it('ignores later client lines split across batches (state carries clientSeen)', () => {
+			let state = initialPumpState();
+			const first = processUpstreamLines([chunkLine('{"client":"Leo Bidi"}\n')], state);
+			state = first.state;
+			const second = processUpstreamLines([chunkLine('{"client":"Otro"}\n')], state);
+			expect(clientPayloads(first.events)).toHaveLength(1);
+			expect(second.events).toEqual([]);
+		});
+
+		it('emits invalid for the first (empty) client line and accepts a later valid one', () => {
+			const badLine = JSON.stringify({ client: '' });
+			const result = processUpstreamLines(
+				[chunkLine(`${badLine}\n`), chunkLine('{"client":"Leo Bidi"}\n')],
+				initialPumpState()
+			);
+			expect(clientPayloads(result.events)).toEqual([
+				{ type: 'client', client: { name: 'Leo Bidi' } }
+			]);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line: badLine,
+				reason: 'CLIENT_NAME_REQUIRED'
+			});
+		});
+
+		it('treats an object mixing client with item fields as an item line', () => {
+			const line = JSON.stringify({
+				client: 'Leo Bidi',
+				description: 'Chorizos colorados',
+				quantity: 45,
+				unitPriceCents: 1500
+			});
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'item',
+				item: { description: 'Chorizos colorados', quantity: 45, unitPriceCents: 1500 }
+			});
+			expect(result.state.clientSeen).toBe(false);
+		});
+
+		it('handles a realistic stream: client mention plus items plus [DONE]', () => {
+			const itemLine = JSON.stringify({
+				description: 'Chorizos colorados',
+				quantity: 45,
+				unitPriceCents: 1500
+			});
+			const result = processUpstreamLines(
+				[
+					chunkLine('{"client":"Leo Bidi"}\n'),
+					chunkLine(`${itemLine}\n`),
+					'data: [DONE]'
+				],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(2);
+			expect(clientPayloads(result.events)).toEqual([
+				{ type: 'client', client: { name: 'Leo Bidi' } }
+			]);
+			expect(framePayload(result.events[1]).type).toBe('item');
+		});
+	});
 });
 
 describe('flushUpstreamBuffer', () => {
@@ -279,6 +437,18 @@ describe('flushUpstreamBuffer', () => {
 	it('emits nothing when the buffer is empty', () => {
 		const flush = flushUpstreamBuffer(initialPumpState());
 		expect(flush.events).toEqual([]);
+	});
+
+	it('flushes a trailing client line lacking the final newline', () => {
+		let state = initialPumpState();
+		state = processUpstreamLines([chunkLine('{"client":"Leo Bidi"}')], state).state;
+		const flush = flushUpstreamBuffer(state);
+		expect(flush.events).toHaveLength(1);
+		expect(framePayload(flush.events[0])).toEqual({
+			type: 'client',
+			client: { name: 'Leo Bidi' }
+		});
+		expect(flush.state.clientSeen).toBe(true);
 	});
 });
 
@@ -330,5 +500,10 @@ describe('upstream contract', () => {
 		expect(SYSTEM_PROMPT).toContain('1..9999');
 		expect(SYSTEM_PROMPT).toContain('99999999');
 		expect(SYSTEM_PROMPT).toContain('JSON');
+	});
+
+	it('system prompt instructs the at-most-once client line', () => {
+		expect(SYSTEM_PROMPT).toContain('"client"');
+		expect(SYSTEM_PROMPT).toContain('client name');
 	});
 });

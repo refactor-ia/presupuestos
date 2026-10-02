@@ -7,9 +7,11 @@
 	interface Props {
 		/** Called for every validated item as it streams in (live table update). */
 		onitem: (item: BudgetItem) => void;
+		/** Called at most once per stream when the model detects a client mention. */
+		onclient?: (name: string) => void;
 	}
 
-	let { onitem }: Props = $props();
+	let { onitem, onclient }: Props = $props();
 
 	// Same cap the server applies to the parse text (see $lib/server/parse).
 	const TEXT_MAX = 2000;
@@ -72,6 +74,8 @@
 					if (parsedEvent.type === 'item') {
 						itemCount += 1;
 						onitem(parsedEvent.item);
+					} else if (parsedEvent.type === 'client') {
+						onclient?.(parsedEvent.client.name);
 					} else if (parsedEvent.type === 'invalid') {
 						invalidCount += 1; // counted, never fatal
 					} else if (parsedEvent.type === 'done') {

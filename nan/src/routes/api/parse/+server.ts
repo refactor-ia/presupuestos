@@ -4,9 +4,10 @@
  * The client sends `{ text }`; the server proxies the NaN API (OpenAI-compatible,
  * `gemma4`, `stream: true`) and pumps the upstream SSE chunks through the pure
  * helpers in `./parse`, re-emitting each completed NDJSON line downstream as an
- * SSE event: `item` for validated budget items, `invalid` for rejected lines
- * (never fatal) and `done` when upstream finishes. The API key never reaches
- * the client, so this must stay server-side.
+ * SSE event: `client` for a client mention (at most once, first valid wins),
+ * `item` for validated budget items, `invalid` for rejected lines (never
+ * fatal) and `done` when upstream finishes. The API key never reaches the
+ * client, so this must stay server-side.
  */
 
 import { env } from '$env/dynamic/private';

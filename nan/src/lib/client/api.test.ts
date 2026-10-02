@@ -80,4 +80,51 @@ describe('parseSseChunk', () => {
 		const { complete } = parseSseChunk(chunk);
 		expect(complete).toEqual<ParseEvent[]>([{ type: 'done' }]);
 	});
+
+	it('parses a client event with its name payload', () => {
+		const { complete, rest } = parseSseChunk(
+			sseFrame({ type: 'client', client: { name: 'Leo Bidi' } })
+		);
+		expect(complete).toEqual<ParseEvent[]>([{ type: 'client', client: { name: 'Leo Bidi' } }]);
+		expect(rest).toBe('');
+	});
+
+	it('completes a client frame split across two chunks', () => {
+		const full = sseFrame({ type: 'client', client: { name: 'Leo Bidi' } });
+		const splitAt = full.indexOf('"name"');
+		const firstPass = parseSseChunk(full.slice(0, splitAt));
+		expect(firstPass.complete).toEqual([]);
+		expect(firstPass.rest).toBe(full.slice(0, splitAt));
+		const secondPass = parseSseChunk(firstPass.rest + full.slice(splitAt));
+		expect(secondPass.complete).toEqual<ParseEvent[]>([
+			{ type: 'client', client: { name: 'Leo Bidi' } }
+		]);
+		expect(secondPass.rest).toBe('');
+	});
+
+	it('drops client events with a malformed payload instead of throwing', () => {
+		const chunk =
+			sseFrame({ type: 'client' }) +
+			sseFrame({ type: 'client', client: 'Leo Bidi' }) +
+			sseFrame({ type: 'client', client: { name: 42 } }) +
+			sseFrame({ type: 'client', client: {} }) +
+			sseFrame({ type: 'done' });
+		const { complete } = parseSseChunk(chunk);
+		expect(complete).toEqual<ParseEvent[]>([{ type: 'done' }]);
+	});
+
+	it('parses a full parse stream: client, item, invalid and done together', () => {
+		const chunk =
+			sseFrame({ type: 'client', client: { name: 'Leo Bidi' } }) +
+			sseFrame({ type: 'item', item: { description: 'Chorizos', quantity: 45, unitPriceCents: 1500 } }) +
+			sseFrame({ type: 'invalid', line: 'oops', reason: 'QUANTITY_INVALID' }) +
+			sseFrame({ type: 'done' });
+		const { complete } = parseSseChunk(chunk);
+		expect(complete).toEqual<ParseEvent[]>([
+			{ type: 'client', client: { name: 'Leo Bidi' } },
+			{ type: 'item', item: { description: 'Chorizos', quantity: 45, unitPriceCents: 1500 } },
+			{ type: 'invalid', line: 'oops', reason: 'QUANTITY_INVALID' },
+			{ type: 'done' }
+		]);
+	});
 });

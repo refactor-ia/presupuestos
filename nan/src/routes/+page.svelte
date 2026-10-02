@@ -165,6 +165,16 @@
 		rowKeys.push(++rowKeySeq);
 	}
 
+	/** Fills the client name from a parsed client mention. Never overwrites
+	 *  user content: it applies only when the field is empty after trim. The
+	 *  other client fields (email/address/rut) stay manual. */
+	function handleParsedClient(name: string): void {
+		const trimmed = name.trim();
+		if (trimmed === '' || clientName.trim() !== '') return;
+		resetSaveFeedback();
+		clientName = trimmed;
+	}
+
 	/** Replaces the form state with a saved budget. The session-generated
 	 *  number stays the session's own (RQ-01): the loaded budget's number is
 	 *  deliberately NOT copied. The PDF flow keeps working untouched. */
@@ -556,7 +566,7 @@
 			<p class="hint-text mb-4">
 				Escribí lo que necesita el cliente y los ítems se agregan a la tabla mientras se analizan.
 			</p>
-			<ParsePanel onitem={handleParsedItem} />
+			<ParsePanel onitem={handleParsedItem} onclient={handleParsedClient} />
 		</section>
 
 		<section class="card min-w-0" aria-labelledby="saved-heading">

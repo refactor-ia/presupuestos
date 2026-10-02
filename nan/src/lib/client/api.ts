@@ -112,6 +112,7 @@ export async function deleteBudget(id: number): Promise<void> {
  */
 export type ParseEvent =
 	| { type: 'item'; item: BudgetItem }
+	| { type: 'client'; client: { name: string } }
 	| { type: 'invalid'; line: string; reason: string }
 	| { type: 'done' };
 
@@ -165,6 +166,9 @@ function parseSseFrame(frame: string): ParseEvent | null {
 			reason: typeof event.reason === 'string' ? event.reason : ''
 		};
 	}
+	if (event.type === 'client' && isClientNamePayload(event.client)) {
+		return { type: 'client', client: { name: (event.client as { name: string }).name } };
+	}
 	if (event.type === 'item' && isBudgetItem(event.item)) {
 		return { type: 'item', item: event.item };
 	}
@@ -183,5 +187,15 @@ function isBudgetItem(value: unknown): value is BudgetItem {
 		Number.isFinite(item.quantity) &&
 		typeof item.unitPriceCents === 'number' &&
 		Number.isFinite(item.unitPriceCents)
+	);
+}
+
+/** Light shape check for streamed client mentions (string name, nothing else required). */
+function isClientNamePayload(value: unknown): value is { name: string } {
+	return (
+		value !== null &&
+		typeof value === 'object' &&
+		!Array.isArray(value) &&
+		typeof (value as Record<string, unknown>).name === 'string'
 	);
 }
