@@ -19,20 +19,26 @@ do not apply on this branch (this is the deliberate stream extension; canonical
       `GET/POST /api/budgets`, `GET/PUT/DELETE /api/budgets/[id]`. ErrorCode map →
       HTTP 422 with code+message from `messages.ts`. Tests for route handlers where
       runnable (domain already covered; add integration smoke via dev server).
-- [ ] T4 — Parse endpoint `POST /api/parse`: proxies NaN API `gemma4`
+- [x] T4 — Parse endpoint (commit 31d2ac6; 229 tests + check green, live smoke in T6) `POST /api/parse`: proxies NaN API `gemma4`
       (`https://api.nan.builders/v1/chat/completions`, `stream: true`), NDJSON item
       protocol — model emits one item per line, server validates each line with
       `validateItem` and re-emits SSE/NDJSON to client; invalid lines flagged, not fatal.
       Key from `NAN_API_KEY` env (local source: `~/.config/opencode/secrets/nan-api-key`).
 - [ ] T5 — Front wiring in `nan/src/routes/+page.svelte`: save / load / list against
       `/api/budgets`; natural-language input box with live item streaming into the table.
-- [ ] T6 — Verification: `pnpm test`, `pnpm check`, `pnpm build`, smoke run of dev server
-      (CRUD roundtrip + parse streaming with a sample text). Evidence in this file.
+- [x] T6 — Verification (commits 31d2ac6 + f28b6b6 fix): pnpm test 247 green,
+      svelte-check 0 errors, pnpm build green (adapter-node). Live smoke: CRUD
+      roundtrip 201/GET/PUT/DELETE/404 + 422 QUANTITY_INVALID OK; parse SSE live
+      with NAN_API_KEY: 2 item events (teclados 1550¢, monitores 12000¢), 0 invalid,
+      1 done. Production-build runtime not smoke-tested (dev server only).
 
 ## Work-unit commits
 
 - T1: 38597ea feat(nan): switch to adapter-node for server routes
-- T2+T3: 5b48b14 feat(nan): budgets CRUD API with SQLite persistence and server-side validation
+- T4: 31d2ac6 feat(nan): streaming natural-language budget parser via NaN API
+- T5: fd2dfae feat(nan): wire UI to budgets API and live parser
+- T6: f28b6b6 fix(nan): decode OpenAI SSE chunks in parse pump before item validation
+  (bug found by live smoke: raw OpenAI chunks fed to item validation → all invalid)
 
 ## Notes / decisions
 
