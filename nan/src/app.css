@@ -1,0 +1,191 @@
+@import 'tailwindcss';
+
+/* Session-scoped dark mode: dark is the initial theme (html.dark set in app.html);
+   the toggle flips the class on <html>. No persistence by design. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+	html {
+		color-scheme: light;
+	}
+
+	html.dark {
+		color-scheme: dark;
+	}
+
+	body {
+		@apply bg-slate-100 text-slate-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+	}
+}
+
+/* Design tokens: the single source for every repeated visual value. */
+@layer components {
+	.card {
+		@apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-colors dark:border-zinc-800 dark:bg-zinc-900 sm:p-6;
+	}
+
+	.card-title {
+		@apply mb-4 text-xs font-semibold tracking-widest text-slate-500 uppercase dark:text-zinc-400;
+	}
+
+	.field-label {
+		@apply mb-1 block text-sm font-medium text-slate-700 dark:text-zinc-300;
+	}
+
+	.field-input {
+		@apply h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-base text-slate-900 outline-none transition-colors placeholder:text-slate-500 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus:border-emerald-400 dark:focus:ring-emerald-400/25;
+	}
+
+	/* Error styling for a field: replaces the default border color, never adds a second ring. */
+	.field-input-error {
+		@apply border-red-500 focus:border-red-500 focus:ring-red-500/30 dark:border-red-400 dark:focus:border-red-400 dark:focus:ring-red-400/25;
+	}
+
+	/* Reserved error slot: always present (min height = one line) so appearing or
+	   disappearing text never shifts neighboring layout (delta ≤ 2px). leading-5
+	   pins the line box to exactly the reserved 20px: the rendered single-line
+	   message occupies the same box as the empty slot (DEF-01). */
+	.field-error {
+		@apply mt-1 min-h-5 text-sm leading-5 text-red-600 dark:text-red-400;
+	}
+
+	.btn {
+		@apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 dark:focus-visible:ring-emerald-400 dark:focus-visible:ring-offset-zinc-950;
+	}
+
+	.btn-primary {
+		/* Dark label on emerald (not white): white on emerald-600 is 3.77:1, below
+		   the 4.5:1 a 14px semibold label needs (INV-02). Matches the dark theme. */
+		@apply bg-emerald-600 text-zinc-950 hover:bg-emerald-500 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400;
+	}
+
+	.btn-secondary {
+		@apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800;
+	}
+
+	/* Row action: 44×44 touch target, glyph biased to the FIRST text line of its
+	   row via .btn-icon-row (the cell is not the reference, the line is). */
+	.btn-icon-ghost {
+		@apply inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors outline-none hover:bg-red-50 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-emerald-600 active:scale-95 dark:text-zinc-500 dark:hover:bg-red-950/40 dark:hover:text-red-400;
+	}
+
+	/* Delete-button variant used inside table rows: keeps the 44×44 hit box but
+	   pads the bottom so the glyph centers on the row's first text line
+	   (text-sm line center = 18px from row top: 4px cell padding + 14px). */
+	.btn-icon-row {
+		@apply pb-4;
+	}
+
+	.table-num {
+		@apply text-right whitespace-nowrap tabular-nums;
+	}
+
+	.hint-text {
+		@apply text-sm text-slate-500 dark:text-zinc-400;
+	}
+}
+
+/* -------------------------------------------------------------------------
+ * Interaction feedback layer (M-04 part A) — decorative motion.
+ * CSS animations/transitions here are disabled for reduced motion by the
+ * media query below; Svelte transitions collapse via $lib/motion.
+ * ---------------------------------------------------------------------- */
+
+/* Theme switch cross-fade: ThemeToggle adds .theme-transition to <html> for a
+   single paint window so every color token eases instead of hard-cutting.
+   The root element itself is included: `html.theme-transition *` alone never
+   matches <html>, so the root's own computed transition read 0s and any
+   root-level color change hard-cut while descendants faded (DEF-02). */
+@media (prefers-reduced-motion: no-preference) {
+	html.theme-transition,
+	html.theme-transition *,
+	html.theme-transition *::before,
+	html.theme-transition *::after {
+		transition-property: background-color, border-color, color, fill, stroke !important;
+		transition-duration: 260ms !important;
+		transition-timing-function: ease !important;
+		transition-delay: 0s !important;
+	}
+}
+
+/* New-row confirmation: a brief emerald wash that fades while the row settles. */
+@keyframes row-enter-flash {
+	from {
+		background-color: rgba(16, 185, 129, 0.24); /* emerald-500 wash */
+	}
+	to {
+		background-color: transparent;
+	}
+}
+.row-enter {
+	animation: row-enter-flash 1s ease-out;
+}
+
+/* Changed-value emphasis: values blink in; the Total also flashes to the
+   accent color and pops — it is the interface's protagonist (design.md). */
+@keyframes value-flash {
+	from {
+		opacity: 0.2;
+	}
+	to {
+		opacity: 1;
+	}
+}
+.value-flash {
+	display: inline-block;
+	animation: value-flash 600ms ease-out;
+}
+@keyframes total-accent-flash {
+	from {
+		color: var(--color-emerald-500, #10b981);
+	}
+	to {
+		color: currentColor;
+	}
+}
+@keyframes total-pop {
+	0% {
+		transform: scale(1.1);
+	}
+	60% {
+		transform: scale(0.99);
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+.total-flash {
+	animation:
+		value-flash 600ms ease-out,
+		total-accent-flash 900ms ease-out,
+		total-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1);
+	transform-origin: 100% 60%;
+}
+
+/* PRES id materialization (F-02): the hydration swap from the PRES-······
+   placeholder to the real id reads as intentional. Plays once on the first
+   real render ({#key} remount); reduced motion collapses it to a hard show. */
+@keyframes id-materialize {
+	from {
+		opacity: 0;
+		transform: scale(0.96);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+.materialize {
+	transform-origin: 0% 60%;
+	animation: id-materialize 240ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Respect the system reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	::before,
+	::after {
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+	}
+}

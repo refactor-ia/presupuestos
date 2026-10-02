@@ -1,107 +1,244 @@
 feature: app-presupuestos
-created: 2026-05-03
-project: presupuestos
+version: v4-draft
+status: borrador
+language: es
+purpose: >
+  Comparar implementaciones de una aplicación estática para crear un presupuesto de cliente,
+  calcular sus importes y descargar un PDF local con la misma entrada canónica.
 
-goals:
-  - "Permitir a un profesional armar un presupuesto cliente-por-cliente en una sola pantalla, viendo totales actualizados en tiempo real a medida que carga ítems"
-  - "Entregar al cliente un PDF descargable con identificador único del presupuesto (PRES-XXXXXX), datos del cliente, detalle de ítems y totales con IVA discriminado"
-  - "Operar 100% en el navegador sin backend ni cuentas, de modo que el usuario pueda usar la app inmediatamente sin fricción de registro ni configuración"
+scope:
+  goals:
+    - id: GOAL-01
+      text: Crear un presupuesto de una sola sesión con datos de cliente e ítems.
+    - id: GOAL-02
+      text: Mostrar importes en tiempo real y exportar un PDF identificable y legible.
+    - id: GOAL-03
+      text: Operar enteramente en el navegador sin cuentas, backend ni persistencia.
+  out_of_scope:
+    - Cuentas, autenticación, backend, historial o edición de presupuestos previos.
+    - Persistencia, colaboración, envío de email, firma, contabilidad o formatos distintos de PDF.
+    - Múltiples monedas, tasas o impuestos, descuentos, recargos o conversión monetaria.
+    - Paneles, dashboards, IA, analítica, telemetría o funcionalidades promocionales.
 
-constraints:
-  - "El estado es efímero: cualquier refresh del navegador descarta el presupuesto actual y genera un nuevo número PRES — no se persiste nada entre sesiones"
-  - "Todos los importes se muestran en pesos con prefijo `$ ` y exactamente dos decimales separados por punto (ej: `$ 1234.50`); el IVA se calcula como 22% sobre el subtotal total con redondeo half-up a 2 decimales"
-  - "El campo nombre del cliente y la descripción de cada ítem son obligatorios; cantidad debe ser entero ≥ 1 y precio unitario número ≥ 0.01 con punto como separador decimal"
-  - "El PDF generado debe descargarse con nombre `PRES-XXXXXX.pdf` y contener header (número + fecha), datos del cliente, tabla de ítems con columnas Descripción/Cant./Precio/Subtotal, bloque de totales (Subtotal, IVA 22%, Total) y footer con número de página"
+requirements:
+  - id: RQ-01
+    title: Sesión y número
+    requirement: >
+      Al abrir, generar y mostrar un identificador con patrón PRES-seis dígitos. El presupuesto,
+      cliente, ítems y tema no persisten tras recargar. La generación aleatoria no garantiza
+      unicidad entre recargas y no se debe probar que dos valores sean distintos. El usuario
+      nunca debe ver un identificador que luego sea reemplazado por otro: si la plataforma
+      prerenderiza HTML, el identificador se genera en el cliente y se prueba contra la URL
+      real de evaluación (incluida la variante HTTP no segura).
+  - id: RQ-02
+    title: Datos de cliente
+    requirement: >
+      Solicitar nombre obligatorio; email, dirección y RUT son opcionales. Si un email no vacío
+      no tiene formato válido, bloquear la exportación e informar el error junto al campo.
+  - id: RQ-03
+    title: Ítems
+    requirement: >
+      Permitir agregar y eliminar ítems con descripción, cantidad y precio unitario válidos.
+      No se exige editar ítems ya agregados.
+  - id: RQ-04
+    title: Cálculo y presentación
+    requirement: >
+      Mostrar subtotales, IVA 22% y total usando la misma fuente de verdad en UI y PDF. Todo
+      importe se muestra exactamente como '$ ' seguido del monto con punto como separador de
+      miles, coma como separador decimal y dos decimales (por ejemplo '$ 1.234,50'); por debajo
+      de 1.000 el patrón es '$ 39,42'. Los textos auxiliares de escala (por ejemplo
+      '≈ 6,10 millones') son opcionales y deben estar fuera del importe.
+  - id: RQ-05
+    title: Exportación local
+    requirement: >
+      Exportar un PDF local denominado PRES-XXXXXX.pdf con el mismo identificador visible,
+      fecha, cliente, tabla de ítems, totales y pie con número de página.
+  - id: RQ-06
+    title: Temas y estados
+    requirement: >
+      Iniciar en tema oscuro, permitir cambiar entre oscuro y claro dentro de la sesión y resolver
+      estados vacío, inválido, exportando, éxito, error recuperable y contenido largo.
 
-not_in_scope:
-  - "Persistencia entre sesiones (localStorage, IndexedDB, backend, cuentas de usuario, historial de presupuestos)"
-  - "Múltiples monedas, múltiples tasas de IVA, IVA por línea, descuentos, recargos, impuestos adicionales o conversión de moneda"
-  - "Edición/duplicación/búsqueda de presupuestos previos, envío por email, firma digital, integración con sistemas contables o exportación a formatos distintos de PDF"
+input_contract:
+  normalization:
+    - Recortar espacios iniciales y finales antes de validar o guardar campos de texto.
+    - Conservar espacios internos significativos de nombre, dirección, RUT y descripción.
+    - Rechazar entradas no finitas, notación científica, signos y separadores de miles.
+    - Aceptar punto o coma como separador decimal en cantidades y precios.
+  limits_proposed_v2:
+    client_name_max_characters: 120
+    email_max_characters: 254
+    address_max_characters: 240
+    rut_max_characters: 30
+    description_max_characters: 240
+    maximum_items: 100
+    quantity_minimum: 1
+    quantity_maximum: 9999
+    unit_price_minimum: '0.01'
+    unit_price_maximum: '999999.99'
+  grammar:
+    quantity: '^[1-9][0-9]{0,3}$'
+    unit_price: '^(?:0|[1-9][0-9]{0,5})(?:[.,][0-9]{1,2})?$'
+  validation:
+    - Nombre y descripción no pueden quedar vacíos después de recortar espacios.
+    - Email vacío es válido; un email presente debe tener una forma local@dominio.tld sin espacios.
+    - Cantidad usa solo la gramática indicada y debe estar dentro de los límites.
+    - Precio usa punto o coma como separador decimal, hasta dos decimales, dentro de los
+      límites; un separador de miles aparente ('1.234' con tres decimales) se rechaza.
+    - Un ítem inválido no se agrega y la exportación se bloquea sin cliente o ítems válidos.
+    - Al alcanzar 100 ítems, informar el límite y no agregar otro.
+
+money_contract:
+  currency_display: '$ 4.143.420,00'
+  source_of_truth: >
+    Convertir el precio válido a centavos enteros antes de calcular. Multiplicar centavos por la
+    cantidad entera, sumar subtotales en centavos y formatear desde centavos; no usar flotantes
+    como fuente de verdad monetaria.
+  tax: IVA 22% sobre el subtotal agregado
+  rounding: >
+    Para valores positivos, aplicar half-up una sola vez al IVA agregado en centavos: redondear
+    hacia arriba cuando la fracción de centavo sea exactamente la mitad o mayor. El total es
+    subtotal en centavos más IVA en centavos. No redondear IVA por línea.
+  canonical_example:
+    inputs: ['3 x 10,55', '1 x 7,77']
+    item_subtotals: ['$ 31,65', '$ 7,77']
+    subtotal: '$ 39,42'
+    iva_22: '$ 8,67'
+    total: '$ 48,09'
+
+pdf_contract:
+  local_only: true
+  filename: PRES-XXXXXX.pdf
+  date: Fecha local actual legible y consistente entre UI y PDF para una misma exportación.
+  required_order:
+    - Encabezado con número PRES y fecha actual.
+    - Datos de cliente presentes, sin rótulos vacíos para opcionales ausentes.
+    - Tabla Descripción, Cant., Precio y Subtotal; una fila por ítem.
+    - Totales Subtotal, IVA 22% y Total.
+    - Pie con número de página en cada página.
+  long_content: >
+    Envolver o tratar descripciones largas de forma legible, paginar antes de superponer contenido,
+    repetir encabezado de tabla en páginas continuadas y conservar los totales con contexto.
+  interaction: >
+    Durante la exportación mostrar progreso y evitar solicitudes duplicadas. Ante error mostrar un
+    mensaje recuperable, conservar la sesión actual y ofrecer reintento. El éxito confirma que se
+    inició la descarga, no que el sistema operativo guardó el archivo.
+      document_quality: >
+        El PDF debe leerse como un documento diseñado por el mismo producto que la interfaz:
+        composición intencional, jerarquía tipográfica y un tratamiento visual sobrio y profesional.
+        Un documento de texto plano sin composición no cumple, aunque contenga todos los datos.
+        La estética específica es libre y es parte de lo que se evalúa.
+
+acceptance_boundaries:
+  ui_and_pdf_consistency:
+    - Los subtotales, IVA y total de una misma sesión son idénticos en UI y PDF.
+    - El PDF usa el mismo número PRES que se muestra al usuario y conserva el orden requerido.
+    - El formato exacto aplica a cero, precios, subtotales, IVA y total.
+  whitespace_and_overflow:
+    - Los campos de texto solo se consideran vacíos después de recortar espacios externos.
+    - Los límites de longitud se comunican antes de perder datos y no rompen el diseño.
+    - Una descripción extensa no puede tapar ni reemplazar cantidades o importes en UI o PDF.
+  keyboard_validation:
+    - Validar al abandonar un campo inválido o al intentar la acción correspondiente.
+    - El usuario puede llegar a campo, mensaje, eliminar ítem, tema y exportación con teclado.
+    - La exportación deshabilitada conserva la explicación exacta de SC-09 cuando no hay ítems.
+  non_requirements:
+    - No se requiere una prueba probabilística de colisión de PRES ni una garantía de unicidad.
+    - No se requiere edición de una fila, persistencia, cuentas ni cambios de tasa o moneda.
+    - No se exige una tecnología de componentes, estado, tema o paginación específica.
 
 scenarios:
-  - name: "Happy path: crear presupuesto completo y exportar PDF"
-    given: "El usuario abre la app y se generó automáticamente un número PRES-XXXXXX visible en la UI"
-    when: "Carga nombre del cliente 'Cliente Demo', agrega un ítem con descripción 'Diseño web', cantidad 2 y precio unitario 50.00, y hace click en 'Exportar PDF'"
-    then: "Se descarga un archivo con nombre exacto `PRES-XXXXXX.pdf` (mismo número que muestra la UI), que contiene en el header el número y la fecha actual, en la sección cliente 'Cliente Demo', una fila de tabla con 'Diseño web | 2 | $ 50.00 | $ 100.00', y en totales 'Subtotal: $ 100.00', 'IVA 22%: $ 22.00', 'Total: $ 122.00'"
+  - id: SC-01
+    name: Crear presupuesto completo y exportar PDF
+    given: Se muestra un PRES-XXXXXX al abrir la aplicación.
+    when: Se carga Cliente Demo y Diseño web, cantidad 2, precio 50.00, y se elige Exportar PDF.
+    then: >
+      Se inicia PRES-XXXXXX.pdf con el mismo número visible, fecha, Cliente Demo, fila Diseño web |
+      2 | $ 50,00 | $ 100,00 y totales Subtotal: $ 100,00, IVA 22%: $ 22,00, Total: $ 122,00.
+  - id: SC-02
+    name: Nombre de cliente vacío
+    given: Hay al menos un ítem válido y el nombre está vacío.
+    when: Se intenta exportar o se valida el formulario.
+    then: Se informa que el nombre es obligatorio y Exportar PDF permanece deshabilitado.
+  - id: SC-03
+    name: Email de cliente inválido
+    given: El nombre es Ana López y el email es no-es-email.
+    when: El campo pierde foco o se valida el formulario.
+    then: Se informa formato inválido y Exportar PDF permanece deshabilitado mientras persista.
+  - id: SC-04
+    name: Cantidad inválida
+    given: Descripción y precio son válidos.
+    when: Se ingresa 0, 1.5 o -3 como cantidad y se intenta agregar o se abandona el campo.
+    then: Se informa que debe ser un entero mayor o igual a 1 y el ítem no se agrega.
+  - id: SC-05
+    name: Precio unitario inválido
+    given: Descripción y cantidad son válidas.
+    when: Se ingresa -10, 0, 1.234 o 12,5a como precio.
+    then: >
+      Se informa que el precio debe ser un número mayor o igual a 0,01 con punto o coma como
+      separador decimal y sin separadores de miles, y el ítem no se agrega. '12,50' es válido
+      y equivale a $ 12,50.
+  - id: SC-06
+    name: Descripción vacía
+    given: Cantidad y precio son válidos pero la descripción está vacía.
+    when: Se intenta agregar el ítem.
+    then: Se informa que la descripción es obligatoria y el ítem no se agrega.
+  - id: SC-07
+    name: IVA 22% y redondeo half-up
+    given: Existen A, cantidad 3, precio 10.55, y B, cantidad 1, precio 7.77.
+    when: Se renderizan los ítems.
+    then: >
+      Se muestran A $ 31,65, B $ 7,77, Subtotal $ 39,42, IVA 22% $ 8,67 y Total $ 48,09.
+  - id: SC-08
+    name: Eliminar el último ítem
+    given: Existe un solo ítem y hay totales no cero.
+    when: Se elimina ese ítem.
+    then: La lista queda vacía, los tres totales muestran $ 0.00 y Exportar PDF queda deshabilitado.
+  - id: SC-09
+    name: Lista vacía y ayuda de exportación
+    given: No hay ítems, con o sin datos de cliente.
+    when: Se inspecciona o pasa el cursor por Exportar PDF.
+    then: Está deshabilitado y muestra exactamente Agregá al menos un ítem.
+  - id: SC-10
+    name: Toggle de tema
+    given: La aplicación abre en modo oscuro.
+    when: Se activa el control de tema dos veces.
+    then: Cambia a claro y luego vuelve a oscuro sin persistir la preferencia.
+  - id: SC-11
+    name: Recarga efímera
+    given: Hay un presupuesto cargado con cliente e ítems.
+    when: Se recarga el navegador.
+    then: Cliente e ítems vuelven a vacío, totales a $ 0.00 y se muestra un nuevo PRES-XXXXXX generado para esa sesión.
+  - id: SC-12
+    name: PDF con datos completos
+    given: >
+      Existe PRES-654321 para Acme SA, email info@acme.com, dirección Av. Siempre Viva 742,
+      RUT 210000000019 y dos ítems.
+    when: Se elige Exportar PDF.
+    then: >
+      PRES-654321.pdf contiene en orden vertical encabezado y fecha, datos de cliente, tabla con
+      las cuatro columnas, totales y pie con número de página.
 
-  - name: "Validación: nombre del cliente vacío"
-    given: "El usuario tiene al menos un ítem cargado correctamente y el campo nombre del cliente está vacío"
-    when: "Intenta exportar PDF o se evalúa el estado del formulario"
-    then: "El campo nombre muestra un mensaje de error indicando que es obligatorio y el botón 'Exportar PDF' permanece disabled"
+  - id: SC-13
+    name: Monto grande legible con separador de miles
+    given: Existe un ítem con cantidad 1000 y precio 5.000,00 (o su equivalente '5000,00').
+    when: Se renderizan los totales en UI y en el PDF exportado.
+    then: >
+      UI y PDF muestran exactamente Subtotal $ 5.000.000,00, IVA 22% $ 1.100.000,00 y
+      Total $ 6.100.000,00, con separador de miles en ambos lados. Los textos auxiliares de
+      escala ('≈ 6,10 millones') son opcionales y quedan fuera del importe.
 
-  - name: "Validación: email del cliente con formato inválido"
-    given: "El usuario completó nombre del cliente 'Ana López' y escribió 'no-es-email' en el campo email"
-    when: "El campo email pierde foco o se valida el formulario"
-    then: "El campo email muestra un mensaje de error indicando formato inválido y el botón 'Exportar PDF' queda disabled mientras el email sea inválido"
+traceability:
+  RQ-01: [SC-01, SC-08, SC-09, SC-10, SC-11]
+  RQ-02: [SC-01, SC-02, SC-03, SC-12]
+  RQ-03: [SC-01, SC-04, SC-05, SC-06, SC-08]
+  RQ-04: [SC-01, SC-07, SC-08, SC-13]
+  RQ-05: [SC-01, SC-12]
+  RQ-06: [SC-09, SC-10, SC-12]
 
-  - name: "Validación: cantidad de ítem inválida (cero, decimal o negativo)"
-    given: "El usuario está cargando un ítem con descripción válida y precio válido"
-    when: "Ingresa en cantidad un valor 0, 1.5 o -3 e intenta agregar el ítem o pierde foco del campo"
-    then: "Se muestra un mensaje de error en el campo cantidad indicando que debe ser un entero mayor o igual a 1 y el ítem no se agrega a la lista"
-
-  - name: "Validación: precio unitario inválido (negativo, cero o con coma)"
-    given: "El usuario está cargando un ítem con descripción y cantidad válidas"
-    when: "Ingresa en precio unitario un valor -10, 0, o '12,50' (con coma)"
-    then: "Se muestra un mensaje de error indicando que el precio debe ser un número mayor o igual a 0.01 con punto como separador decimal, y el ítem no se agrega"
-
-  - name: "Validación: descripción de ítem vacía"
-    given: "El usuario tiene cantidad y precio válidos pero descripción vacía"
-    when: "Intenta agregar el ítem"
-    then: "Se muestra un mensaje de error indicando que la descripción es obligatoria y el ítem no se agrega a la lista"
-
-  - name: "Cálculo de totales con IVA 22% y redondeo half-up"
-    given: "El usuario tiene cargados dos ítems: 'A' cantidad 3 precio 10.55, y 'B' cantidad 1 precio 7.77"
-    when: "La tabla de ítems se renderiza con ambos cargados"
-    then: "Subtotal del ítem A muestra `$ 31.65`, subtotal de B muestra `$ 7.77`, Subtotal total muestra `$ 39.42`, IVA 22% muestra `$ 8.67` (39.42 * 0.22 = 8.6724 redondeado half-up a 8.67), Total muestra `$ 48.09`"
-
-  - name: "Eliminar el último ítem deja totales en cero"
-    given: "El usuario tiene exactamente un ítem cargado con totales no cero visibles"
-    when: "Hace click en eliminar ese ítem"
-    then: "La lista de ítems queda vacía, Subtotal muestra `$ 0.00`, IVA 22% muestra `$ 0.00`, Total muestra `$ 0.00`, y el botón 'Exportar PDF' queda disabled"
-
-  - name: "Lista vacía: botón PDF disabled con tooltip"
-    given: "El usuario abre la app por primera vez sin haber agregado ningún ítem (con o sin datos de cliente cargados)"
-    when: "Inspecciona el botón 'Exportar PDF' o intenta hacer hover"
-    then: "El botón 'Exportar PDF' está disabled y muestra el tooltip exacto 'Agregá al menos un ítem'"
-
-  - name: "Toggle de tema dark/light"
-    given: "El usuario abre la app por primera vez con dark mode activo por defecto"
-    when: "Hace click en el switch de tema"
-    then: "La UI cambia a light mode aplicando los tokens semánticos correspondientes; un segundo click vuelve a dark mode"
-
-  - name: "Refresh descarta estado y genera nuevo número PRES"
-    given: "El usuario tiene cargado un presupuesto con número PRES-123456, cliente y dos ítems"
-    when: "Refresca el navegador (F5 o Ctrl+R)"
-    then: "La app vuelve al estado inicial: nuevo número PRES-XXXXXX distinto del anterior con probabilidad cercana a 1 (6 dígitos random), datos del cliente vacíos, lista de ítems vacía, totales en `$ 0.00`"
-
-  - name: "PDF generado tiene layout y filename correctos"
-    given: "El usuario tiene un presupuesto válido con número PRES-654321, cliente 'Acme SA' con email 'info@acme.com', dirección 'Av. Siempre Viva 742', RUT '210000000019', y dos ítems cargados"
-    when: "Hace click en 'Exportar PDF'"
-    then: "Se descarga un archivo `PRES-654321.pdf` cuyo contenido en orden vertical es: (1) header con 'PRES-654321' y fecha del día, (2) bloque de datos del cliente con nombre/email/dirección/RUT, (3) tabla con columnas 'Descripción', 'Cant.', 'Precio', 'Subtotal' y una fila por ítem, (4) bloque de totales con 'Subtotal', 'IVA 22%' y 'Total', (5) footer con número de página"
-
-notes: |
-  Contexto de benchmarking
-  ------------------------
-  Este spec es input idéntico para 7 modelos de IA (deepseek, kimi, mimo, minimax, glm, codex, claude) que implementan la misma feature en condiciones iguales para una comparativa de RefactorIA. La prescripción fuerte sobre comportamiento observable, formato de strings ($ con espacio + dos decimales con punto), filenames y layout de PDF es deliberada: garantiza comparabilidad. Queda libre por modelo: estilo visual fino (colores específicos, espaciados, microanimaciones) y la organización interna del state.
-
-  Stack pinned (vive en constitution.md, no en constraints)
-  ----------------------------------------------------------
-  SvelteKit + Svelte 5 con runes obligatorios ($state, $derived, $effect, $props), TypeScript estricto, @sveltejs/adapter-static (SPA pure-frontend con fallback: 'index.html'), shadcn-svelte, Tailwind CSS v4 con tokens semánticos, mode-watcher usando mode.current, pnpm 9, Node 20 LTS, Vitest, jsPDF.
-
-  Anti-patterns prohibidos (frecuentes)
-  ------------------------------------------------------------------------
-  - Sintaxis Svelte 4: writable(), $:, export let — está prohibido, usar runes.
-  - Usar $mode en vez de mode.current de mode-watcher.
-  - Generar tailwind.config.js — Tailwind v4 no lo usa, configuración via @theme en CSS.
-  - Confundir shadcn-svelte con shadcn/ui (React) — son librerías distintas.
-  - Olvidar fallback: 'index.html' en adapter-static — rompe SPA routing.
-  - Romper SSR con jsPDF: requiere import dinámico dentro del handler de click, o ssr=false en la página que lo usa.
-
-  Decisiones de diseño cerradas (no abrir debate)
-  -----------------------------------------------
-  - Persistencia efímera por diseño: la app es de un solo presupuesto a la vez, sin login ni historial.
-  - IVA único 22% sobre subtotal total (no por línea) con redondeo half-up a 2 decimales.
-  - Locale decimal: punto solamente, rechazar coma explícitamente con mensaje de error.
-  - Dark mode default ON.
-  - PDF generado con jsPDF (no window.print()) para tener control total del layout y nombre de archivo.
-  - Numeración PRES-XXXXXX con 6 dígitos numéricos random generada al iniciar sesión, mantenida hasta refresh.
+benchmark_notes:
+  identical_input: Todos los participantes reciben esta misma versión y la misma línea base congelada.
+  evidence: Las capturas y comprobaciones de PDF no ejecutadas se declaran; no se fabrican resultados.
+  draft_release_prerequisite: >
+    No liberar ni ejecutar como v3 hasta que mantenimiento fije y verifique versiones, lockfile y
+    procedimiento de instalación comunes.

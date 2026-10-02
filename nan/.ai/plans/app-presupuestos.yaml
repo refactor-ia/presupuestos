@@ -1,0 +1,128 @@
+feature: app-presupuestos
+version: v4-draft
+status: borrador
+inputs:
+  spec: .ai/specs/app-presupuestos.yaml
+  constitution: .ai/constitution.md
+  design: .ai/design.md
+  evaluation: .ai/evaluation.md
+
+preconditions:
+  - id: PRE-01
+    requirement: >
+      Mantenimiento congeló una línea base verificable con versiones exactas, lockfile y
+      dependencias instaladas antes de cada corrida. Estado actual: NO COMPLETADO.
+  - id: PRE-02
+    requirement: Cada participante recibe los mismos documentos v3 aprobados y el mismo entorno.
+  - id: PRE-03
+    requirement: No se inicia una corrida mientras este material siga marcado como borrador.
+  - id: PRE-04
+    requirement: >
+      El evaluador definió la URL (y la variante HTTP no segura si aplica) desde la que se probará
+      la entrega; el participante la incluye en sus verificaciones y la declara en el informe.
+
+milestones:
+  - id: M-01
+    title: Confirmar entorno y decisiones breves
+    depends_on: [PRE-01, PRE-02, PRE-03]
+    participant_decisions:
+      - Organización de estado y módulos sin persistencia.
+      - Composición visual para escritorio y móvil dentro del brief.
+      - Tratamiento de texto largo y paginación del PDF.
+    outputs:
+      - Aplicación SvelteKit estática creada bajo la línea base común.
+      - Nota breve de decisiones y dependencias justificadas.
+    acceptance: [G-01, G-02, RQ-01, RQ-06]
+    verification:
+      - Confirmar versión de lockfile y ausencia de dependencias fuera de la línea base.
+      - Ejecutar build y registrar el resultado real.
+
+  - id: M-02
+    title: Construir vertical slice de presupuesto
+    depends_on: [M-01]
+    scope:
+      - Número PRES visible, cliente, alta y baja de ítems, totales y formato monetario.
+      - Validación de gramática, límites, foco y mensajes de campo.
+      - Tema oscuro inicial y toggle de sesión.
+    outputs:
+      - Flujo usable desde estado vacío hasta presupuesto válido.
+      - Cálculos desde centavos y pruebas Vitest relevantes.
+    acceptance: [RQ-01, RQ-02, RQ-03, RQ-04, SC-02, SC-03, SC-04, SC-05, SC-06, SC-07, SC-08, SC-09, SC-10, SC-11]
+    verification:
+      - Ejecutar Vitest para cálculo, formato, gramática y validación.
+      - Recorrer con teclado los campos, errores y acción deshabilitada.
+      - Confirmar el caso canónico 31.65 / 7.77 / 39.42 / 8.67 / 48.09.
+
+  - id: M-03
+    title: Exportar PDF y resolver límites
+    depends_on: [M-02]
+    scope:
+      - Generación local con jsPDF, nombre y datos requeridos.
+      - Progreso, error recuperable y reintento de exportación.
+      - Texto largo, tabla multipágina, encabezados continuados y pie por página.
+    outputs:
+      - PDF breve y PDF de contenido largo generados desde los mismos cálculos de la UI.
+    acceptance: [RQ-05, RQ-06, SC-01, SC-12, G-06]
+    verification:
+      - Revisar nombre, orden, valores y legibilidad del PDF breve.
+      - Revisar paginación del caso de 25 ítems y descripción de 120 caracteres.
+      - Documentar como no ejecutada cualquier revisión que el entorno no permita.
+
+  - id: M-04
+    title: Consolidar interfaz y evidencia
+    depends_on: [M-03]
+    scope:
+      - Elevar la calidad de interacción y del documento exportado al nivel del brief: recompensa perceptible en las acciones núcleo, composición estable y PDF con diseño.
+      - No añadir funcionalidades fuera del reto para mejorar la presentación.
+    outputs:
+      - Cuatro capturas canónicas o informe de indisponibilidad.
+      - Resultados de build, Vitest y matriz de escenarios.
+    acceptance: [G-03, G-04, G-05, SC-01, SC-02, SC-03, SC-04, SC-05, SC-06, SC-07, SC-08, SC-09, SC-10, SC-11, SC-12, SC-13]
+    verification:
+      - Ejecutar build y la suite Vitest disponible.
+      - Revisar los estados del brief en 1280x800 y 375x812.
+      - Completar informe de evidencia sin convertir ausencia de prueba en aprobación.
+
+  - id: M-05
+    title: Gate de QA pre-entrega
+    depends_on: [M-04]
+    scope:
+      - Ejecutar la matriz T-01 a T-06 (constitución) contra la URL de evaluación.
+      - Verificar los cinco flujos críticos con evidencia literal propia y por nombre.
+      - Registrar hallazgos con estado; nada afirmado sin evidencia.
+    outputs:
+      - Matriz de QA con URL y build declaradas por verificación.
+      - Informe de evidencia con hallazgo → estado y no ejecutados declarados.
+    acceptance: [G-07]
+    verification:
+      - Confirmar que ningún tipo de prueba queda en rojo.
+      - Declarar las verificaciones no ejecutadas sin convertirlas en aprobadas.
+
+traceability:
+  M-01: [PRE-01, PRE-02, PRE-03, PRE-04, G-01, G-02, RQ-01, RQ-06]
+  M-02: [RQ-01, RQ-02, RQ-03, RQ-04, SC-02, SC-03, SC-04, SC-05, SC-06, SC-07, SC-08, SC-09, SC-10, SC-11]
+  M-03: [RQ-05, RQ-06, SC-01, SC-12, G-06]
+  M-04: [G-03, G-04, G-05, SC-01, SC-02, SC-03, SC-04, SC-05, SC-06, SC-07, SC-08, SC-09, SC-10, SC-11, SC-12, SC-13]
+  M-05: [G-07]
+
+final_acceptance:
+  mandatory_gates: [G-01, G-02, G-03, G-04, G-05, G-06, G-07]
+  scenario_ids: [SC-01, SC-02, SC-03, SC-04, SC-05, SC-06, SC-07, SC-08, SC-09, SC-10, SC-11, SC-12, SC-13]
+  evidence_reference: .ai/evaluation.md
+  rationale: >
+    La secuencia prioriza un flujo vertical y verificable antes de pulir detalles, conserva libertad
+    de implementación y hace visibles las pruebas que requieren revisión independiente.
+
+participant_report:
+  required:
+    - Línea base y lockfile usados.
+    - URL y build (dev/producción) de cada verificación.
+    - Decisiones de arquitectura y diseño en pocas líneas.
+    - Decisiones de estilo y motion en pocas líneas.
+    - Comandos ejecutados y resultados observados.
+    - Estado de cada escenario y evidencia visual/PDF disponible.
+    - Riesgos, fallos conocidos y verificaciones no ejecutadas.
+  prohibited_claims:
+    - No afirmar que un PDF, captura o prueba no ejecutada fue verificada.
+    - No declarar lista una corrida con línea base no congelada.
+    - No atribuir causas al desempeño de otros modelos.

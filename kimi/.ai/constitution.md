@@ -1,146 +1,93 @@
-# Constitution — presupuestos
+# Constitution técnica — Benchmark v4 (BORRADOR)
 
-> Generado el 2026-05-03.
-> Centraliza las restricciones técnicas y estándares que guían toda implementación en este proyecto.
-> El stack y las convenciones reflejan un estándar web moderno con SvelteKit + Svelte 5 runes + Tailwind v4.
+Estas reglas comparan implementaciones bajo un entorno común sin imponer una arquitectura, árbol de componentes ni firmas de funciones.
 
-## Stack
+## Entorno común
 
-- **Runtime:** Node 20 LTS
-- **Package manager:** pnpm 9
-- **Framework:** SvelteKit (última versión estable)
-- **Lenguaje:** TypeScript estricto (`strict: true` en tsconfig)
-- **UI library:** Svelte 5 con runes (`$state`, `$derived`, `$effect`, `$props`, `$bindable`)
-- **Adapter:** `@sveltejs/adapter-static` con `fallback: 'index.html'` (SPA pure-frontend, sin server)
-- **Styling:** Tailwind CSS v4 con tokens semánticos
-- **UI components:** shadcn-svelte (sobre `bits-ui`)
-- **Dark mode:** mode-watcher v1.x
-- **PDF:** jsPDF (importación dinámica en el handler para evitar SSR)
-- **Testing:** Vitest
+| Área | Regla |
+|---|---|
+| Framework | SvelteKit con Svelte 5 y sintaxis actual de runes cuando corresponda. |
+| Lenguaje | TypeScript con comprobación estricta. |
+| Estilos | Tailwind CSS 4; tokens y composición visual quedan a criterio participante. |
+| Salida | Frontend estático, sin backend de aplicación. |
+| PDF | jsPDF generado íntegramente en el navegador. |
+| Pruebas | Vitest para reglas de dominio y validación. |
+| Dependencias | Una línea base exacta, lockfile y herramientas congeladas para todos los modelos. |
 
-## Conventions
+La línea base exacta es un requisito de liberación, pero está **NO COMPLETADA** en este borrador: no hay manifests ni versiones verificables en el repositorio. Mantenimiento debe fijarla e instalarla una vez antes de iniciar corridas. Una dependencia adicional solo es admisible si está justificada, incorporada a esa línea base y disponible para todas las corridas; no se admite deriva por modelo. Una herramienta común de prueba de interfaz puede proponerse bajo la misma política.
 
-### Estructura de archivos
+## Libertad de implementación
 
-```
-src/
-├── app.css                # @import "tailwindcss" + @variant dark + tokens
-├── app.html
-├── lib/
-│   ├── components/
-│   │   ├── ui/            # shadcn-svelte (no editar a mano)
-│   │   ├── BudgetForm.svelte
-│   │   ├── ItemsTable.svelte
-│   │   ├── TotalsPanel.svelte
-│   │   └── ThemeToggle.svelte
-│   ├── state/             # state global con runes
-│   │   └── budget.svelte.ts
-│   ├── pdf/               # generación PDF
-│   │   └── exportBudget.ts
-│   ├── utils/
-│   │   ├── currency.ts    # formateo $ con 2 decimales
-│   │   ├── rounding.ts    # half-up a 2 decimales
-│   │   └── budgetNumber.ts
-│   └── types/
-│       └── budget.ts      # tipos TypeScript del dominio
-└── routes/
-    ├── +layout.svelte     # ModeWatcher + theme provider
-    ├── +layout.ts         # export const prerender = true; ssr = false (si aplica)
-    └── +page.svelte       # pantalla única
-```
+Se permite elegir organización de archivos, estado local o compartido, componentes, utilidades, estrategia de validación, biblioteca de componentes y mecanismo de tema, siempre que se cumplan los requisitos conductuales, la línea base y estas restricciones. No se exige una biblioteca de tema, un observador de modo, una estructura global de estado, ni usar todas las runes. Use `$state`, `$derived`, `$props` y `$effect` solo cuando el problema lo justifique; evite APIs reactivas legadas de Svelte 4.
 
-### Naming
+El formato de moneda debe producir exactamente el contrato de la spec (punto como separador de miles, coma como separador decimal). La elección de API de presentación es libre únicamente si conserva ese resultado para todos los valores válidos; la semántica aritmética no depende de una API de formato.
 
-- **Componentes:** `PascalCase.svelte` (ej: `BudgetForm.svelte`)
-- **Módulos TS:** `camelCase.ts` (ej: `budgetNumber.ts`)
-- **Archivos de state con runes:** sufijo `.svelte.ts` (ej: `budget.svelte.ts`)
-- **Tipos:** `PascalCase` en interfaces (`Budget`, `BudgetItem`, `Client`)
-- **Funciones puras / utils:** `camelCase` (`formatCurrency`, `roundHalfUp`, `generateBudgetNumber`)
+## Límites de seguridad y privacidad
 
-### Imports
+- No hay backend, cuentas, cookies, `localStorage`, `sessionStorage`, IndexedDB ni otra persistencia de navegador, incluida la preferencia de tema.
+- No hay llamadas de datos a terceros, telemetría, analítica, CDNs, fuentes remotas ni compartición de datos de presupuesto en tiempo de ejecución.
+- Servir los propios activos estáticos de la aplicación sí está permitido.
+- El PDF se genera y descarga localmente; los datos no salen del navegador.
+- No usar `eval` ni insertar entrada de usuario como HTML sin tratar. La salida debe escapar o tratar de forma segura el texto introducido.
 
-- Usar alias `$lib/` para imports internos
-- Orden: externos → `$lib/` → relativos
-- Sin imports default cuando hay nombrados disponibles
+## Calidad de dominio
 
-### Svelte 5 — obligatorio
+- La spec define la gramática de entradas, límites, importes en centavos y redondeo; toda UI y todo PDF deben derivar de ese mismo resultado.
+- No utilizar aritmética de punto flotante como fuente de verdad monetaria. Las representaciones de presentación pueden convertir desde centavos sin cambiar el valor.
+- La tasa es IVA 22% sobre el subtotal agregado, con redondeo half-up una sola vez para el impuesto.
+- Los mensajes y strings declarados como exactos en la spec se preservan literalmente.
+- El identificador debe coincidir con `PRES-` seguido de seis dígitos. La aleatoriedad no garantiza unicidad entre sesiones y ninguna prueba debe depender de ella.
 
-- **PROHIBIDO:** `writable()`, `derived()`, `$:`, `export let`, slot syntax viejo (`<slot>`)
-- **OBLIGATORIO:** `$state`, `$derived`, `$effect`, `$props`, snippets (`{#snippet}` / `{@render}`)
-- Props tipadas: `let { prop }: { prop: string } = $props();`
-- State global compartido entre componentes: módulo `.svelte.ts` exportando objeto con `$state` (no stores).
+## Calidad de interfaz y PDF
 
-### Tailwind CSS v4 — obligatorio
+- La app debe ser operable con teclado, etiquetas accesibles, foco visible y mensajes de validación asociados al campo.
+- Debe resolver estados vacío, inválido, carga, éxito, error recuperable y contenido largo según el brief de diseño.
+- La exportación debe mostrar avance mientras se prepara, impedir duplicados accidentales y permitir reintentar después de un error.
+- El PDF debe conservar información legible en páginas adicionales, con encabezado de tabla repetido cuando corresponda y pie con número de página.
 
-- **PROHIBIDO:** `tailwind.config.js`/`.ts`, directivas `@tailwind base/components/utilities`, colores hardcoded (`bg-white`, `text-gray-500`, etc.)
-- **OBLIGATORIO:**
-  - `@import "tailwindcss";` en `app.css`
-  - `@variant dark (&:where(.dark, .dark *));` debajo del import (crítico para que `dark:` responda a la clase `.dark` de mode-watcher)
-  - Configuración de tema con `@theme { ... }` directamente en CSS
-  - Colores via tokens semánticos: `bg-background`, `text-foreground`, `bg-card`, `text-muted-foreground`, `border-border`, `bg-primary`, `text-primary-foreground`, `bg-destructive`, etc.
-- **Patrón de migración:** `bg-white` → `bg-card` · `bg-gray-100` → `bg-muted` · `text-gray-900` → `text-foreground` · `text-gray-500` → `text-muted-foreground` · `border-gray-*` → `border-border` · `hover:bg-gray-50` → `hover:bg-muted`
+## Reglas estructurales de entrega
 
-### shadcn-svelte
+- Toda estructura repetida se entrega como componente con nombre; no se duplica marcado.
+- Los mensajes de validación derivan de un mapa por código de error (un código = un mensaje).
+- Las reglas de dominio (dinero, gramáticas, límites) viven en un módulo puro sin dependencia del
+  framework; la UI y el PDF derivan del mismo resultado.
+- Iconos y tokens de diseño con fuente única; sin valores mágicos repetidos inline.
+- No usar APIs solo-secure-context (por ejemplo `crypto.randomUUID`) sin fallback: la entrega se
+  prueba contra la URL real del evaluador, incluida la variante HTTP no segura.
+- El PDF debe extraer limpio con herramientas estándar de texto (sin mojibake ni glifos fuera de
+  la codificación de la fuente).
 
-- Inicializar con `pnpm dlx shadcn-svelte@latest init`
-- Componentes UI dentro de `src/lib/components/ui/`
-- **NO confundir con shadcn/ui (React).** shadcn-svelte usa `bits-ui`, no Radix.
-- Bug conocido: si `sheet-content.svelte` se genera con `import { cn, type WithoutChildrenOrChild } from "$lib/utils.js"`, corregir a `import type { WithoutChildrenOrChild } from "bits-ui"` (no relevante para este proyecto si no se usa Sheet, pero documentar).
+## Gate de QA pre-entrega (obligatorio)
 
-### Dark mode (mode-watcher)
+No se declara la entrega sin la matriz de QA completa en verde. Un flujo crítico roto = entrega
+rechazada, independientemente del resto. La matriz registra cada tipo con estado
+(`verde` / `rojo` / `no ejecutado`) y declara URL y build de cada verificación.
 
-- Instalar `mode-watcher` v1.x
-- En `+layout.svelte`: `<ModeWatcher defaultMode="dark" />` (default ON por requerimiento del producto)
-- Acceso al estado: `mode.current` (string `'dark' | 'light'`) — **NO** `$mode`
-- Toggle: `import { toggleMode } from 'mode-watcher'` y `onclick={toggleMode}`
-- Para evitar flash en carga: `<html class="dark">` hardcoded en `app.html` (mode-watcher se encarga de actualizar al iniciar)
+| ID | Tipo | Alcance mínimo |
+|---|---|---|
+| T-01 | Unitarias de dominio | Gramáticas, centavos, half-up, límites, formatos — puro, sin DOM |
+| T-02 | Funcional e2e de flujos críticos | Contra la URL real del evaluador, con navegador real |
+| T-03 | Accesibilidad | Labels, foco visible, teclado completo, aria-live, contraste, targets táctiles (INV-02, INV-03, INV-04 de design.md) |
+| T-04 | Exploratorio | Los estados de design.md en ambos temas, 2 viewports, recarga, límites |
+| T-05 | Adversarial de frontera | Hidratación, contextos inseguros, carreras, paginación límite |
+| T-06 | Revisión de entrega | Matriz hallazgo → estado; nada afirmado sin evidencia |
 
-### TypeScript
+Flujos críticos (T-02), con evidencia literal propia y por nombre:
 
-- `strict: true` en `tsconfig.json` (heredado del default de `pnpm create svelte`)
-- Sin `any` salvo casos justificados con comentario
-- Tipar todos los props, return types públicos y modelos de dominio
+1. Cargar una línea de ítem (descripción + cantidad + precio → aparece en la tabla).
+2. Generar el PDF (descarga local con filename correcto y contenido legible).
+3. Totales correctos agregando y eliminando ítems.
+4. Completar cliente y bloquear export con datos inválidos.
+5. Recarga → estado efímero.
 
-## Security Restrictions
+Un solo tipo de prueba en rojo bloquea la entrega. 'No ejecutado' es válido pero deja la entrega
+incompleta y el evaluador lo publica así.
 
-- **No persistencia:** prohibido `localStorage`, `sessionStorage`, `IndexedDB`, cookies, llamadas a APIs externas.
-- **No telemetría:** sin analytics, sin tracking, sin requests salientes.
-- **PDF generado en cliente:** jsPDF corre 100% en browser, no envía datos a ningún servidor.
-- **No eval / no innerHTML con input del usuario:** todo render via templates Svelte (escapado por defecto).
-- **No deps de runtime no listadas:** solo el stack pinned. Cualquier librería adicional requiere justificación.
+## Verificación
 
-## Testing Standards
-
-- **Framework:** Vitest
-- **Tipos de tests requeridos:**
-  - Unit tests para utils puros (`currency.ts`, `rounding.ts`, `budgetNumber.ts`)
-  - Unit tests para lógica de cálculo de totales
-  - Tests de validación (cantidad inválida, precio inválido, email inválido)
-- **Cobertura mínima:** funciones puras al 100%; componentes con lógica de negocio al menos los happy paths.
-- **Naming:** archivos `*.test.ts` o `*.spec.ts` colocados junto al módulo testeado o en `tests/` cuando sea integration.
-- **Comando:** `pnpm test` debe correr la suite completa sin errores.
-
-## Technical Decisions
-
-- **State management:** runes en módulos `.svelte.ts` exportando objetos con `$state`. Sin Pinia, sin stores legacy.
-- **Data fetching:** N/A (app pure-frontend sin backend).
-- **Error handling:** validación inline en formularios con mensajes específicos por campo. Errores de PDF (improbables) se loggean a console en dev y se muestran al usuario via toast/alert visible.
-- **Number/currency formatting:** función propia `formatCurrency(value: number): string` que devuelve `$ 1234.50` (prefijo `$ ` con espacio + 2 decimales con punto). **No** usar `Intl.NumberFormat` con locale (genera comas en `es-UY`).
-- **Rounding:** `roundHalfUp(value: number, decimals: number = 2): number` implementado a mano. **No** confiar en `toFixed` (banker's rounding en algunos motores) ni `Math.round` directo (rounds half-to-even para `.5` exactos en algunos cases).
-- **Random number generation (PRES-XXXXXX):** `crypto.getRandomValues()` para 6 dígitos numéricos. Generado una vez al iniciar la sesión, almacenado en módulo state, persiste hasta refresh.
-- **Build:** `pnpm build` debe completar sin errores; el output en `build/` es servible estáticamente.
-
-## Anti-patterns prohibidos (lista corta para checklist)
-
-- ❌ `writable()`, `derived()`, `readable()` de `svelte/store`
-- ❌ `$: derived = a + b` (reactividad Svelte 4)
-- ❌ `export let prop` (props Svelte 4)
-- ❌ `$mode` (mode-watcher viejo)
-- ❌ `tailwind.config.js`/`.ts`
-- ❌ `@tailwind base/components/utilities`
-- ❌ Colores hardcoded (`bg-white`, `text-gray-500`, etc.)
-- ❌ `localStorage` / `sessionStorage` / `IndexedDB`
-- ❌ `Intl.NumberFormat` con locale `es-*` (genera coma decimal)
-- ❌ `toFixed(2)` para redondeo crítico (no es half-up consistente)
-- ❌ Importar jsPDF en top-level (rompe SSR aunque sea `prerender`)
-- ❌ Olvidar `fallback: 'index.html'` en `adapter-static` config
+- Ejecutar pruebas Vitest de cálculos, gramática y validación relevante.
+- Ejecutar build y reportar su resultado real.
+- Correr la suite e2e contra la URL real de evaluación y declarar URL y build en el informe.
+- Revisar manual o independientemente los escenarios, las vistas requeridas y el PDF cuando el entorno lo permita.
+- Las pruebas automatizadas no sustituyen una revisión visual, de teclado o de PDF.
+- Si una comprobación no puede ejecutarse, se informa como no disponible; no se declara aprobada.
