@@ -7,7 +7,7 @@
 	import Totals from '$lib/components/Totals.svelte';
 	import ParsePanel from '$lib/components/ParsePanel.svelte';
 	import BudgetPicker from '$lib/components/BudgetPicker.svelte';
-	import { ApiError, saveBudget, type Budget } from '$lib/client/api';
+	import { ApiError, saveBudget, updateBudget, type Budget } from '$lib/client/api';
 	import { formatLongDate } from '$lib/date';
 	import { motionDuration } from '$lib/motion';
 	import { exportBudgetPdf } from '$lib/pdf/generate';
@@ -177,7 +177,9 @@
 
 	/** Replaces the form state with a saved budget. The session-generated
 	 *  number stays the session's own (RQ-01): the loaded budget's number is
-	 *  deliberately NOT copied. The PDF flow keeps working untouched. */
+	 *  deliberately NOT copied. The loaded budget's id is remembered so a
+	 *  later save UPDATES that row instead of duplicating it. The PDF flow
+	 *  keeps working untouched. */
 	function handleLoadBudget(budget: Budget): void {
 		clientName = budget.clientName;
 		clientEmail = budget.email;
@@ -185,6 +187,7 @@
 		clientRut = budget.rut;
 		items = budget.items.map((item) => ({ ...item }));
 		rowKeys = items.map(() => ++rowKeySeq);
+		savedBudgetId = budget.id;
 		// Values just loaded are valid; clear blur-touched errors.
 		nameTouched = false;
 		emailTouched = false;
@@ -199,6 +202,13 @@
 	const SAVE_SUCCESS_TEXT = 'Presupuesto guardado.';
 	const SAVE_ERROR_FALLBACK = 'No se pudo guardar el presupuesto. Probá de nuevo.';
 
+	/** Id of the budget row this session currently persists to, or null while
+	 *  the form is unsaved (next save creates a row). Set on a successful
+	 *  create and when a saved budget is loaded. No explicit "new budget"
+	 *  control exists, so resetting to null happens on page reload only:
+	 *  until then every save updates the same row (create-then-update). */
+	let savedBudgetId = $state<number | null>(null);
+
 	const saveBusy = $derived(savePhase === 'busy');
 	const canSave = $derived(presId !== null && items.length > 0 && !clientInvalid);
 
@@ -206,15 +216,23 @@
 		if (presId === null || savePhase === 'busy') return;
 		savePhase = 'busy';
 		saveErrorText = null;
+		const payload = {
+			number: presId,
+			clientName: clientName.trim(),
+			email: clientEmail.trim(),
+			address: clientAddress.trim(),
+			rut: clientRut.trim(),
+			items: items.map((item) => ({ ...item }))
+		};
 		try {
-			await saveBudget({
-				number: presId,
-				clientName: clientName.trim(),
-				email: clientEmail.trim(),
-				address: clientAddress.trim(),
-				rut: clientRut.trim(),
-				items: items.map((item) => ({ ...item }))
-			});
+			// Create-then-update: the first save POSTs a new row; every later
+			// save PUTs the same row. The session PRES- number is only used on
+			// create — the server preserves (and ignores) it on update (RQ-01).
+			const saved =
+				savedBudgetId !== null
+					? await updateBudget(savedBudgetId, payload)
+					: await saveBudget(payload);
+			savedBudgetId = saved.id;
 			savePhase = 'success';
 			picker?.refresh(); // the saved budget appears in the list immediately
 		} catch (error) {

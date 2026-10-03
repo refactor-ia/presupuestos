@@ -80,6 +80,19 @@ export async function saveBudget(payload: BudgetPayload): Promise<Budget> {
 	return (await response.json()) as Budget;
 }
 
+/** PUT /api/budgets/[id] — update a saved budget; rejects with ApiError when missing or invalid. */
+export async function updateBudget(id: number, payload: BudgetPayload): Promise<Budget> {
+	const response = await fetch(`/api/budgets/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+	if (!response.ok) {
+		throw await apiErrorFrom(response);
+	}
+	return (await response.json()) as Budget;
+}
+
 /** GET /api/budgets — all saved budgets, newest first. */
 export async function listBudgets(): Promise<Budget[]> {
 	const response = await fetch('/api/budgets');

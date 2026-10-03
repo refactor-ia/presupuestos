@@ -54,12 +54,25 @@ export type CreateBudgetResult = { ok: true; budget: Budget } | { ok: false; cod
 type Parsed<T> = { ok: true; value: T } | { ok: false; code: ErrorCode };
 
 /**
- * Session-generated identifier shape (see $lib/domain/session.ts). The
- * ErrorCode union has no dedicated code for a malformed or duplicated
- * identifier, so the generic client-data code is used (documented deviation).
+ * Session-generated identifier shape (see $lib/domain/session.ts). A malformed
+ * identifier still reports the generic client-data code (documented deviation);
+ * a DUPLICATE identifier reports the dedicated PRES_NUMBER_DUPLICATE code below.
  */
 const PRES_NUMBER_PATTERN = /^PRES-\d{6}$/;
 const NUMBER_ERROR_CODE: ErrorCode = 'EXPORT_CLIENT_INVALID';
+const DUPLICATE_NUMBER_ERROR_CODE: ErrorCode = 'PRES_NUMBER_DUPLICATE';
+
+/** True when a thrown error is a UNIQUE-constraint failure from node:sqlite. */
+function isUniqueConstraintError(error: unknown): boolean {
+	// node:sqlite surfaces SQLITE_CONSTRAINT_* through errstr/code; fall back to
+	// the message so a shape change in Node never silently reclassifies this.
+	if (error === null || typeof error !== 'object') return false;
+	const e = error as { code?: unknown; errstr?: unknown; message?: unknown };
+	const haystack = [e.code, e.errstr, e.message]
+		.filter((part): part is string => typeof part === 'string')
+		.join(' ');
+	return haystack.includes('SQLITE_CONSTRAINT');
+}
 
 interface BudgetRow {
 	id: number;
@@ -257,24 +270,34 @@ export function createBudget(body: unknown): CreateBudgetResult {
 	const db = getDatabase();
 	const duplicate = db.prepare('SELECT id FROM budgets WHERE number = ?').get(number);
 	if (duplicate !== undefined) {
-		return { ok: false, code: NUMBER_ERROR_CODE };
+		return { ok: false, code: DUPLICATE_NUMBER_ERROR_CODE };
 	}
 	const now = new Date().toISOString();
-	const result = db
-		.prepare(
-			`INSERT INTO budgets (number, client_name, email, address, rut, items, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		)
-		.run(
-			number,
-			fields.value.clientName,
-			fields.value.email,
-			fields.value.address,
-			fields.value.rut,
-			JSON.stringify(fields.value.items),
-			now,
-			now
-		);
+	let result: { lastInsertRowid: number | bigint };
+	try {
+		result = db
+			.prepare(
+				`INSERT INTO budgets (number, client_name, email, address, rut, items, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				number,
+				fields.value.clientName,
+				fields.value.email,
+				fields.value.address,
+				fields.value.rut,
+				JSON.stringify(fields.value.items),
+				now,
+				now
+			);
+	} catch (error) {
+		// Defensive: a concurrent request could insert the same number between the
+		// pre-check above and this INSERT, so the UNIQUE constraint fires here.
+		if (isUniqueConstraintError(error)) {
+			return { ok: false, code: DUPLICATE_NUMBER_ERROR_CODE };
+		}
+		throw error;
+	}
 	return {
 		ok: true,
 		budget: {

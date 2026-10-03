@@ -1,11 +1,68 @@
-import { describe, expect, it } from 'vitest';
-import { parseSseChunk } from './api';
+import { describe, expect, it, vi } from 'vitest';
+import { ApiError, parseSseChunk, updateBudget } from './api';
 import type { ParseEvent } from './api';
 
 /** Build one downstream SSE frame exactly as $lib/server/parse emits it. */
 function sseFrame(payload: unknown): string {
 	return `data: ${JSON.stringify(payload)}\n\n`;
 }
+
+describe('updateBudget', () => {
+	const payload = {
+		number: 'PRES-000001',
+		clientName: 'Ada Lovelace',
+		email: 'ada@example.com',
+		address: 'Calle Falsa 123',
+		rut: '12345678-9',
+		items: [{ description: 'Consultoría', quantity: 2, unitPriceCents: 1500 }]
+	};
+
+	it('PUTs the payload to /api/budgets/[id] and resolves with the stored budget', async () => {
+		const stored = { id: 7, ...payload, createdAt: 't1', updatedAt: 't2' };
+		const fetchMock = vi.fn(async () =>
+			new Response(JSON.stringify(stored), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		try {
+			await expect(updateBudget(7, payload)).resolves.toEqual(stored);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/budgets/7',
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload)
+			}
+		);
+	});
+
+	it('throws an ApiError with the server code/message/status on non-OK responses', async () => {
+		const fetchMock = vi.fn(async () =>
+			new Response(JSON.stringify({ code: 'PRES_NUMBER_DUPLICATE', message: 'Duplicado' }), {
+				status: 422,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		try {
+			const error = await updateBudget(7, payload).then(
+				() => null,
+				(e: unknown) => e
+			);
+			expect(error).toBeInstanceOf(ApiError);
+			expect((error as ApiError).code).toBe('PRES_NUMBER_DUPLICATE');
+			expect((error as ApiError).message).toBe('Duplicado');
+			expect((error as ApiError).status).toBe(422);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+});
 
 describe('parseSseChunk', () => {
 	it('parses a single complete item event', () => {

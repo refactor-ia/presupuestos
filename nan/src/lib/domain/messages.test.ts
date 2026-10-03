@@ -5,6 +5,7 @@ import type { ErrorCode } from './validate';
 const ALL_CODES: ErrorCode[] = [
 	'NO_ITEMS',
 	'EXPORT_CLIENT_INVALID',
+	'PRES_NUMBER_DUPLICATE',
 	'CLIENT_NAME_REQUIRED',
 	'CLIENT_NAME_TOO_LONG',
 	'EMAIL_INVALID',
@@ -30,6 +31,12 @@ describe('error message map', () => {
 
 	it('preserves the exact SC-09 explanation', () => {
 		expect(ERROR_MESSAGES.NO_ITEMS).toBe('Agregá al menos un ítem');
+	});
+
+	it('gives duplicate PRES- numbers their own actionable message', () => {
+		expect(ERROR_MESSAGES.PRES_NUMBER_DUPLICATE).toBe(
+			'Ya existe un presupuesto guardado con el número PRES-XXXXXX. Recargá la página para empezar uno nuevo.'
+		);
 	});
 
 	it('resolves codes for the UI and passes null through', () => {

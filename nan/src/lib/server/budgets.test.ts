@@ -126,6 +126,12 @@ describe('budgets repository', () => {
 		expect(deleteBudget(budget.id)).toBe(false);
 	});
 
+	it('rejects a duplicate PRES- number with the dedicated duplicate code', () => {
+		const input = validInput();
+		created(createBudget(input));
+		expect(rejected(createBudget(input))).toEqual({ code: 'PRES_NUMBER_DUPLICATE' });
+	});
+
 	it('rejects an invalid client name', () => {
 		const input = validInput();
 		input.clientName = '   ';
