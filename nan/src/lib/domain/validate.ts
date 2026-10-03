@@ -14,6 +14,7 @@ import { parsePriceToCents } from './money';
 export type ErrorCode =
 	| 'NO_ITEMS'
 	| 'EXPORT_CLIENT_INVALID'
+	| 'PRES_NUMBER_DUPLICATE'
 	| 'CLIENT_NAME_REQUIRED'
 	| 'CLIENT_NAME_TOO_LONG'
 	| 'EMAIL_INVALID'

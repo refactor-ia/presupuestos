@@ -8,6 +8,8 @@ import type { ErrorCode } from './validate';
 export const ERROR_MESSAGES: Record<ErrorCode, string> = {
 	NO_ITEMS: 'Agregá al menos un ítem',
 	EXPORT_CLIENT_INVALID: 'Revisá los datos del cliente antes de exportar.',
+	PRES_NUMBER_DUPLICATE:
+		'Ya existe un presupuesto guardado con el número PRES-XXXXXX. Recargá la página para empezar uno nuevo.',
 	CLIENT_NAME_REQUIRED: 'El nombre es obligatorio.',
 	CLIENT_NAME_TOO_LONG: 'Máximo 120 caracteres.',
 	EMAIL_INVALID: 'El formato del email es inválido.',

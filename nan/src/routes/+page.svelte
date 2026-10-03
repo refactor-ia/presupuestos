@@ -5,8 +5,11 @@
 	import TextField from '$lib/components/TextField.svelte';
 	import ItemsTable from '$lib/components/ItemsTable.svelte';
 	import Totals from '$lib/components/Totals.svelte';
+	import ParsePanel from '$lib/components/ParsePanel.svelte';
+	import BudgetPicker from '$lib/components/BudgetPicker.svelte';
+	import { ApiError, saveBudget, updateBudget, type Budget } from '$lib/client/api';
 	import { formatLongDate } from '$lib/date';
-	import { motionDuration } from '$lib/motion';
+	import { motionDuration, prefersReducedMotion } from '$lib/motion';
 	import { exportBudgetPdf } from '$lib/pdf/generate';
 	import { pdfFilenameFor } from '$lib/pdf/plan';
 	import { createExportFlow, type ExportPhase } from '$lib/pdf/exportFlow';
@@ -115,6 +118,7 @@
 		const quantityCode = validateItemQuantity(itemQuantity);
 		const priceCode = validateItemUnitPrice(itemUnitPrice);
 		if (descriptionCode !== null || quantityCode !== null || priceCode !== null) return;
+		resetSaveFeedback();
 		items.push({
 			description: itemDescription.trim(),
 			// Grammar-validated above; these parses cannot fail here.
@@ -133,9 +137,244 @@
 	}
 
 	function handleRemoveItem(index: number): void {
+		resetSaveFeedback();
 		items.splice(index, 1);
 		rowKeys.splice(index, 1);
 		descriptionInput?.focus(); // the removed button is gone; land focus on a usable field
+	}
+
+	// --- Parse stream (natural language → items) and saved budgets ----------
+
+	// INV-08 analog for saving: any budget change makes a visible save
+	// confirmation obsolete, so it is cleared on every mutation. A save that is
+	// currently in flight keeps its state (its outcome lands afterwards).
+	function resetSaveFeedback(): void {
+		if (savePhase !== 'busy') {
+			savePhase = 'idle';
+			saveSuccessText = '';
+		}
+		saveNoticeText = null;
+		clearSaveFeedbackTimer();
+	}
+
+	/** Appends one streamed item to the table. The MAX_ITEMS cap is respected:
+	 *  once reached, further streamed items are dropped and the existing
+	 *  item-limit reserved slot shows ITEM_LIMIT_REACHED (messages.ts). */
+	function handleParsedItem(item: BudgetItem): void {
+		resetSaveFeedback();
+		if (validateItemLimit(items.length) !== null) return;
+		items.push({ ...item });
+		rowKeys.push(++rowKeySeq);
+	}
+
+	/** Fills the client name from a parsed client mention. Never overwrites
+	 *  user content: it applies only when the field is empty after trim. When
+	 *  the field already holds a name the mention is dropped — but not
+	 *  silently: a transient notice in the save feedback slot says so. The
+	 *  other client fields (email/address/rut) stay manual. */
+	function handleParsedClient(name: string): void {
+		const trimmed = name.trim();
+		if (trimmed === '') return;
+		if (clientName.trim() === '') {
+			resetSaveFeedback();
+			clientName = trimmed;
+			return;
+		}
+		showSaveNotice(
+			`El texto mencionaba al cliente ${trimmed}, pero el campo ya tiene un nombre. No se modificó.`
+		);
+	}
+
+	/** Fills the client email from a parsed email mention. Same never-overwrite
+	 *  rule as handleParsedClient: applies only when the field is empty after
+	 *  trim; otherwise a transient notice says the mention was dropped. */
+	function handleParsedEmail(email: string): void {
+		const trimmed = email.trim();
+		if (trimmed === '') return;
+		if (clientEmail.trim() === '') {
+			resetSaveFeedback();
+			clientEmail = trimmed;
+			return;
+		}
+		showSaveNotice('El texto mencionaba un email, pero el campo ya tiene uno. No se modificó.');
+	}
+
+	/** Fills the client address from a parsed address mention. Same
+	 *  never-overwrite rule as handleParsedClient (see above). */
+	function handleParsedAddress(address: string): void {
+		const trimmed = address.trim();
+		if (trimmed === '') return;
+		if (clientAddress.trim() === '') {
+			resetSaveFeedback();
+			clientAddress = trimmed;
+			return;
+		}
+		showSaveNotice(
+			'El texto mencionaba una dirección, pero el campo ya tiene una. No se modificó.'
+		);
+	}
+
+	const LOAD_OVERWRITE_CONFIRM =
+		'Hay datos en el formulario. ¿Cargar el presupuesto seleccionado y reemplazarlos?';
+
+	/** True when the user has entered anything a load would replace: any
+	 *  client field non-empty, or at least one item row. */
+	function formIsDirty(): boolean {
+		return (
+			clientName.trim() !== '' ||
+			clientEmail.trim() !== '' ||
+			clientAddress.trim() !== '' ||
+			clientRut.trim() !== '' ||
+			items.length > 0
+		);
+	}
+
+	/** Replaces the form state with a saved budget. The session-generated
+	 *  number stays the session's own (RQ-01): the loaded budget's number is
+	 *  deliberately NOT copied. The loaded budget's id is remembered so a
+	 *  later save UPDATES that row instead of duplicating it. The PDF flow
+	 *  keeps working untouched. */
+	function handleLoadBudget(budget: Budget): void {
+		// Overwrite guard: loading replaces everything the user typed, so the
+		// action is confirmed whenever the form holds data (empty form loads
+		// directly — there is nothing to lose).
+		if (formIsDirty() && !confirm(LOAD_OVERWRITE_CONFIRM)) return;
+		clientName = budget.clientName;
+		clientEmail = budget.email;
+		clientAddress = budget.address;
+		clientRut = budget.rut;
+		items = budget.items.map((item) => ({ ...item }));
+		rowKeys = items.map(() => ++rowKeySeq);
+		savedBudgetId = budget.id;
+		// Values just loaded are valid; clear blur-touched errors.
+		nameTouched = false;
+		emailTouched = false;
+		addressTouched = false;
+		rutTouched = false;
+		resetSaveFeedback();
+		// Feedback in the shared save slot: what happened and which number the
+		// loaded data carries. The parse panel's status line would otherwise
+		// keep describing the previous form content, so it is reset too.
+		showSaveSuccess(`Presupuesto ${budget.number} cargado.`);
+		parsePanel?.resetStatus();
+	}
+
+	let picker = $state<BudgetPicker | null>(null);
+	let parsePanel = $state<ParsePanel | null>(null);
+	let savePhase = $state<'idle' | 'busy' | 'success' | 'error'>('idle');
+	let saveErrorText = $state<string | null>(null);
+	/** Success line: the PRES number echo on save, or load/delete feedback. */
+	let saveSuccessText = $state('');
+	/** Transient neutral notice (e.g. an ignored parse client mention). */
+	let saveNoticeText = $state<string | null>(null);
+	const SAVE_ERROR_FALLBACK = 'No se pudo guardar el presupuesto. Probá de nuevo.';
+	/** How long success/notice feedback stays visible; errors persist until
+	 *  the next action clears them (INV-08). */
+	const SAVE_FEEDBACK_MS = 6_000;
+	let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function clearSaveFeedbackTimer(): void {
+		clearTimeout(saveFeedbackTimer);
+	}
+
+	/** Shows a success line that auto-clears after SAVE_FEEDBACK_MS. */
+	function showSaveSuccess(text: string): void {
+		savePhase = 'success';
+		saveSuccessText = text;
+		saveNoticeText = null;
+		clearSaveFeedbackTimer();
+		saveFeedbackTimer = setTimeout(() => {
+			if (savePhase === 'success') {
+				savePhase = 'idle';
+				saveSuccessText = '';
+			}
+		}, SAVE_FEEDBACK_MS);
+	}
+
+	/** Shows a transient notice that auto-clears after SAVE_FEEDBACK_MS. A
+	 *  save in flight owns the slot, so the notice is dropped: its outcome
+	 *  lands immediately after and would overwrite it anyway. */
+	function showSaveNotice(text: string): void {
+		if (savePhase === 'busy') return;
+		savePhase = 'idle';
+		saveSuccessText = '';
+		saveNoticeText = text;
+		clearSaveFeedbackTimer();
+		saveFeedbackTimer = setTimeout(() => {
+			saveNoticeText = null;
+		}, SAVE_FEEDBACK_MS);
+	}
+
+	// Feedback visibility (UX polish): the save card sits below the fold on
+	// smaller viewports, so a phase change scrolls the feedback slot into
+	// view. block:'nearest' never scrolls when it is already on screen, and
+	// reduced motion gets an instant jump instead of the smooth scroll.
+	let saveFeedbackEl = $state<HTMLDivElement | null>(null);
+	$effect(() => {
+		const visible = savePhase === 'success' || savePhase === 'error' || saveNoticeText !== null;
+		if (!visible) return;
+		saveFeedbackEl?.scrollIntoView({
+			block: 'nearest',
+			behavior: prefersReducedMotion ? 'auto' : 'smooth'
+		});
+	});
+
+	/** Id of the budget row this session currently persists to, or null while
+	 *  the form is unsaved (next save creates a row). Set on a successful
+	 *  create and when a saved budget is loaded. No explicit "new budget"
+	 *  control exists, so resetting to null happens on page reload only:
+	 *  until then every save updates the same row (create-then-update). */
+	let savedBudgetId = $state<number | null>(null);
+
+	const saveBusy = $derived(savePhase === 'busy');
+	const canSave = $derived(presId !== null && items.length > 0 && !clientInvalid);
+
+	// Gate hint for the disabled Guardar button (mirrors exportHint): a
+	// disabled state is information, not an error, so it uses the neutral
+	// hint style — never red.
+	const saveHintId = 'save-hint';
+	const saveHint = $derived.by(() => {
+		if (presId === null || canSave) return null;
+		if (items.length === 0) return 'Agregá al menos un ítem para guardar.';
+		if (clientName.trim() === '') return 'Completá el nombre del cliente para guardar.';
+		// Items + name are fine: another client field fails validation.
+		return messageFor('EXPORT_CLIENT_INVALID');
+	});
+
+	async function handleSave(): Promise<void> {
+		if (presId === null || savePhase === 'busy') return;
+		const sessionNumber = presId;
+		savePhase = 'busy';
+		saveErrorText = null;
+		const payload = {
+			number: sessionNumber,
+			clientName: clientName.trim(),
+			email: clientEmail.trim(),
+			address: clientAddress.trim(),
+			rut: clientRut.trim(),
+			items: items.map((item) => ({ ...item }))
+		};
+		try {
+			// Create-then-update: the first save POSTs a new row; every later
+			// save PUTs the same row. The session PRES- number is only used on
+			// create — the server preserves (and ignores) it on update (RQ-01).
+			const saved =
+				savedBudgetId !== null
+					? await updateBudget(savedBudgetId, payload)
+					: await saveBudget(payload);
+			savedBudgetId = saved.id;
+			// Success echoes the session number, so the user can match the
+			// saved row in the picker without hunting for it.
+			showSaveSuccess(`Guardado como ${sessionNumber}.`);
+			picker?.refresh(); // the saved budget appears in the list immediately
+		} catch (error) {
+			// The API surfaces the Spanish { code, message } contract: render its
+			// message directly, falling back to a generic text when unreachable.
+			saveErrorText =
+				error instanceof ApiError && error.message !== '' ? error.message : SAVE_ERROR_FALLBACK;
+			savePhase = 'error';
+			clearSaveFeedbackTimer(); // errors persist until the next action
+		}
 	}
 
 	// Display rows for the table: items plus their stable transition key.
@@ -253,8 +492,14 @@
 
 	onDestroy(() => {
 		clearTimeout(phaseHoldTimer);
+		clearSaveFeedbackTimer();
 		exportFlow.dispose();
 	});
+
+	/** Feedback for a confirmed delete from the picker (shared save slot). */
+	function handleBudgetDeleted(): void {
+		showSaveSuccess('Presupuesto eliminado.');
+	}
 
 	const exportBusy = $derived(exportPhase === 'preparing');
 	const exportSuccessText = $derived(
@@ -307,6 +552,7 @@
 					bind:value={clientName}
 					error={nameError}
 					required
+					autocomplete="organization"
 					onblur={() => (nameTouched = true)}
 				/>
 				<div class="grid gap-4 sm:grid-cols-2">
@@ -316,6 +562,8 @@
 						bind:value={clientEmail}
 						error={emailError}
 						optional
+						type="email"
+						autocomplete="email"
 						onblur={() => (emailTouched = true)}
 					/>
 					<TextField
@@ -324,6 +572,7 @@
 						bind:value={clientRut}
 						error={rutError}
 						optional
+						autocomplete="off"
 						onblur={() => (rutTouched = true)}
 					/>
 				</div>
@@ -333,6 +582,7 @@
 					bind:value={clientAddress}
 					error={addressError}
 					optional
+					autocomplete="street-address"
 					onblur={() => (addressTouched = true)}
 				/>
 			</div>
@@ -465,9 +715,139 @@
 							<span>{EXPORT_ERROR_TEXT}</span>
 						</p>
 					{:else}
-						<p id={exportHintId} class="field-error" aria-live="polite">{exportHint ?? ''}</p>
+						<p id={exportHintId} class="field-hint" aria-live="polite">{exportHint ?? ''}</p>
 					{/if}
 				</div>
+			</div>
+		</section>
+	</div>
+
+	<div class="mt-6 grid items-start gap-6 lg:grid-cols-2">
+		<section class="card min-w-0" aria-labelledby="parse-heading">
+			<h2 id="parse-heading" class="card-title">Analizar texto</h2>
+			<p class="hint-text mb-4">
+				Escribí lo que necesita el cliente y los ítems se agregan a la tabla mientras se analizan.
+			</p>
+			<ParsePanel
+				bind:this={parsePanel}
+				onitem={handleParsedItem}
+				onclient={handleParsedClient}
+				onemail={handleParsedEmail}
+				onaddress={handleParsedAddress}
+			/>
+		</section>
+
+		<section class="card min-w-0" aria-labelledby="saved-heading">
+			<h2 id="saved-heading" class="card-title">Guardar y cargar</h2>
+			<p class="hint-text mb-4">
+				Guardá el presupuesto actual con su número {presId ?? 'PRES-······'} o cargá uno guardado
+				para seguir trabajando con esos datos.
+			</p>
+			<button
+				type="button"
+				class="btn btn-primary w-full"
+				onclick={handleSave}
+				disabled={!canSave || saveBusy}
+				aria-busy={saveBusy}
+				aria-describedby={saveHint ? saveHintId : undefined}
+			>
+				{#if saveBusy}
+					<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+						<circle
+							class="opacity-25"
+							cx="12"
+							cy="12"
+							r="10"
+							stroke="currentColor"
+							stroke-width="4"
+						/>
+						<path
+							class="opacity-90"
+							fill="currentColor"
+							d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
+						/>
+					</svg>
+					Guardando…
+				{:else}
+					Guardar
+				{/if}
+			</button>
+			<!-- Reserved slot: save feedback swaps in place without shifting layout.
+			     Success/notice carry icons so the outcome reads at a glance even
+			     when the card is only half-scrolled into view (UX polish 2). -->
+			<div class="mt-1 min-h-5" bind:this={saveFeedbackEl}>
+				{#if savePhase === 'success'}
+					<p
+						class="flex items-start gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400"
+						role="status"
+						in:fly={{ y: 4, duration: motionDuration(200) }}
+					>
+						<svg
+							class="mt-0.5 size-4 shrink-0"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M20 6 9 17l-5-5" />
+						</svg>
+						<span>{saveSuccessText}</span>
+					</p>
+				{:else if savePhase === 'error'}
+					<p
+						class="flex items-start gap-1.5 text-sm text-red-600 dark:text-red-400"
+						role="alert"
+						in:fly={{ y: 4, duration: motionDuration(200) }}
+					>
+						<!-- Same alert-icon pattern the Export error uses. -->
+						<svg
+							class="mt-0.5 size-4 shrink-0"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" />
+						</svg>
+						<span>{saveErrorText}</span>
+					</p>
+				{:else if saveNoticeText !== null}
+					<p
+						class="flex items-start gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400"
+						role="status"
+						in:fly={{ y: 4, duration: motionDuration(200) }}
+					>
+						<svg
+							class="mt-0.5 size-4 shrink-0"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
+						</svg>
+						<span>{saveNoticeText}</span>
+					</p>
+				{:else if saveHint !== null}
+					<!-- Gate hint for the disabled button: neutral, never red. -->
+					<p id={saveHintId} class="field-hint" aria-live="polite">{saveHint}</p>
+				{/if}
+			</div>
+			<div class="mt-6">
+				<BudgetPicker
+					bind:this={picker}
+					onload={handleLoadBudget}
+					ondelete={handleBudgetDeleted}
+				/>
 			</div>
 		</section>
 	</div>
