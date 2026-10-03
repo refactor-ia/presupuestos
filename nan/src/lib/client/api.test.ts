@@ -190,15 +190,83 @@ describe('parseSseChunk', () => {
 		expect(complete).toEqual<ParseEvent[]>([{ type: 'done' }]);
 	});
 
-	it('parses a full parse stream: client, item, invalid and done together', () => {
+	it('parses an email event with its payload', () => {
+		const { complete, rest } = parseSseChunk(
+			sseFrame({ type: 'email', email: 'leo@selamastic.com' })
+		);
+		expect(complete).toEqual<ParseEvent[]>([
+			{ type: 'email', email: 'leo@selamastic.com' }
+		]);
+		expect(rest).toBe('');
+	});
+
+	it('drops email events with a malformed payload instead of throwing', () => {
 		const chunk =
-			sseFrame({ type: 'client', client: { name: 'Leo Bidi' } }) +
+			sseFrame({ type: 'email' }) +
+			sseFrame({ type: 'email', email: 42 }) +
+			sseFrame({ type: 'email', email: null }) +
+			sseFrame({ type: 'email', email: {} }) +
+			sseFrame({ type: 'done' });
+		const { complete } = parseSseChunk(chunk);
+		expect(complete).toEqual<ParseEvent[]>([{ type: 'done' }]);
+	});
+
+	it('completes an email frame split across two chunks', () => {
+		const full = sseFrame({ type: 'email', email: 'leo@selamastic.com' });
+		const splitAt = full.indexOf('@');
+		const firstPass = parseSseChunk(full.slice(0, splitAt));
+		expect(firstPass.complete).toEqual([]);
+		expect(firstPass.rest).toBe(full.slice(0, splitAt));
+		const secondPass = parseSseChunk(firstPass.rest + full.slice(splitAt));
+		expect(secondPass.complete).toEqual<ParseEvent[]>([
+			{ type: 'email', email: 'leo@selamastic.com' }
+		]);
+		expect(secondPass.rest).toBe('');
+	});
+
+	it('parses an address event with its payload', () => {
+		const { complete, rest } = parseSseChunk(sseFrame({ type: 'address', address: 'av sarmiento 456' }));
+		expect(complete).toEqual<ParseEvent[]>([{ type: 'address', address: 'av sarmiento 456' }]);
+		expect(rest).toBe('');
+	});
+
+	it('drops address events with a malformed payload instead of throwing', () => {
+		const chunk =
+			sseFrame({ type: 'address' }) +
+			sseFrame({ type: 'address', address: 42 }) +
+			sseFrame({ type: 'address', address: null }) +
+			sseFrame({ type: 'address', address: {} }) +
+			sseFrame({ type: 'done' });
+		const { complete } = parseSseChunk(chunk);
+		expect(complete).toEqual<ParseEvent[]>([{ type: 'done' }]);
+	});
+
+	it('completes an address frame split across two chunks', () => {
+		const full = sseFrame({ type: 'address', address: 'av sarmiento 456' });
+		const splitAt = full.indexOf('sarmiento');
+		const firstPass = parseSseChunk(full.slice(0, splitAt));
+		expect(firstPass.complete).toEqual([]);
+		expect(firstPass.rest).toBe(full.slice(0, splitAt));
+		const secondPass = parseSseChunk(firstPass.rest + full.slice(splitAt));
+		expect(secondPass.complete).toEqual<ParseEvent[]>([
+			{ type: 'address', address: 'av sarmiento 456' }
+		]);
+		expect(secondPass.rest).toBe('');
+	});
+
+	it('parses a full parse stream: client, email, address, item, invalid and done together', () => {
+		const chunk =
+			sseFrame({ type: 'client', client: { name: 'Leo' } }) +
+			sseFrame({ type: 'email', email: 'leo@selamastic.com' }) +
+			sseFrame({ type: 'address', address: 'av sarmiento 456' }) +
 			sseFrame({ type: 'item', item: { description: 'Chorizos', quantity: 45, unitPriceCents: 1500 } }) +
 			sseFrame({ type: 'invalid', line: 'oops', reason: 'QUANTITY_INVALID' }) +
 			sseFrame({ type: 'done' });
 		const { complete } = parseSseChunk(chunk);
 		expect(complete).toEqual<ParseEvent[]>([
-			{ type: 'client', client: { name: 'Leo Bidi' } },
+			{ type: 'client', client: { name: 'Leo' } },
+			{ type: 'email', email: 'leo@selamastic.com' },
+			{ type: 'address', address: 'av sarmiento 456' },
 			{ type: 'item', item: { description: 'Chorizos', quantity: 45, unitPriceCents: 1500 } },
 			{ type: 'invalid', line: 'oops', reason: 'QUANTITY_INVALID' },
 			{ type: 'done' }

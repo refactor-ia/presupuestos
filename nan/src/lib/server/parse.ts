@@ -18,6 +18,8 @@ import { parsePriceToCents } from '$lib/domain/money';
 import {
 	parseQuantity,
 	validateClientName,
+	validateClientEmail,
+	validateClientAddress,
 	validateItemDescription,
 	validateItemQuantity,
 	validateItemUnitPrice
@@ -48,6 +50,8 @@ export const SYSTEM_PROMPT = [
 	'You convert a natural-language budget request (Spanish) into budget items.',
 	'Output ONLY newline-delimited JSON objects: one budget item per line, no prose, no code fences, no blank lines.',
 	'If the request mentions a client name (who the budget is for), ALSO output one extra line `{"client":"<name>"}` (single "client" string field, the person or company name only, no honorifics added) at most once; every other line stays a budget item.',
+	'If the request mentions a client email (a plausible single email address), ALSO output one extra line `{"email":"<email>"}` (single "email" string field, the email address exactly as given) at most once; every other line stays a budget item.',
+	'If the request mentions a client postal address, ALSO output one extra line `{"address":"<address>"}` (single "address" string field, the address text exactly as given, no invention) at most once; every other line stays a budget item.',
 	'Each object has exactly three fields:',
 	'- "description": string in Spanish, what is being bought, at most 240 characters.',
 	'- "quantity": integer 1..9999.',
@@ -149,6 +153,28 @@ export function extractDeltaContent(upstreamLine: string): string | null {
 	return typeof content === 'string' ? content : '';
 }
 
+/**
+ * Email validation for a parsed mention line: the domain validator treats
+ * empty as "optional/absent", but the model emitted a line — an empty email
+ * here is junk and surfaces as EMAIL_INVALID on the invalid path.
+ */
+function validateMentionEmail(email: string): ErrorCode | null {
+	const trimmed = email.trim();
+	if (trimmed === '') {
+		return 'EMAIL_INVALID';
+	}
+	return validateClientEmail(trimmed);
+}
+
+/** Address counterpart of `validateMentionEmail` (empty is junk, not absent). */
+function validateMentionAddress(address: string): ErrorCode | null {
+	const trimmed = address.trim();
+	if (trimmed === '') {
+		return 'ADDRESS_TOO_LONG';
+	}
+	return validateClientAddress(trimmed);
+}
+
 /** Immutable-ish pump state threaded through the upstream-line reducer. */
 export type PumpState = {
 	/** Accumulated model NDJSON text not yet terminated by a newline. */
@@ -157,11 +183,15 @@ export type PumpState = {
 	finished: boolean;
 	/** True once a valid client line has produced a client event (first wins). */
 	clientSeen: boolean;
+	/** True once a valid email line has produced an email event (first wins). */
+	emailSeen: boolean;
+	/** True once a valid address line has produced an address event (first wins). */
+	addressSeen: boolean;
 };
 
-/** Initial pump state: empty NDJSON buffer, stream not finished, no client yet. */
+/** Initial pump state: empty NDJSON buffer, stream not finished, nothing seen yet. */
 export function initialPumpState(): PumpState {
-	return { ndjson: '', finished: false, clientSeen: false };
+	return { ndjson: '', finished: false, clientSeen: false, emailSeen: false, addressSeen: false };
 }
 
 /** Result of feeding a batch of raw upstream lines through the pump. */
@@ -178,9 +208,9 @@ export type PumpBatchResult = {
  *
  * Each upstream chunk line is decoded via `extractDeltaContent` and its
  * content appended to the model NDJSON buffer; every completed NDJSON line
- * is then classified (client mention vs budget item), parsed and validated.
- * `[DONE]` and anything after it stop the pump without emitting frames;
- * non-text lines are ignored silently.
+ * is then classified (client/email/address mention vs budget item), parsed
+ * and validated. `[DONE]` and anything after it stop the pump without
+ * emitting frames; non-text lines are ignored silently.
  */
 export function processUpstreamLines(lines: string[], state: PumpState): PumpBatchResult {
 	if (state.finished) {
@@ -188,7 +218,7 @@ export function processUpstreamLines(lines: string[], state: PumpState): PumpBat
 	}
 	const events: string[] = [];
 	let ndjson = state.ndjson;
-	let clientSeen = state.clientSeen;
+	let { clientSeen, emailSeen, addressSeen } = state;
 	let finished = false;
 	for (const upstreamLine of lines) {
 		if (isUpstreamDone(upstreamLine)) {
@@ -221,11 +251,41 @@ export function processUpstreamLines(lines: string[], state: PumpState): PumpBat
 				}
 				continue;
 			}
+			if (isEmailLine(line)) {
+				if (emailSeen) {
+					// First valid email line wins: later email lines are
+					// ignored silently, never emitted as invalid.
+					continue;
+				}
+				const parsedEmail = parseEmailLine(line);
+				if (parsedEmail.ok) {
+					events.push(emailEvent(parsedEmail.email));
+					emailSeen = true;
+				} else {
+					events.push(invalidEvent(line, parsedEmail.reason));
+				}
+				continue;
+			}
+			if (isAddressLine(line)) {
+				if (addressSeen) {
+					// First valid address line wins: later address lines are
+					// ignored silently, never emitted as invalid.
+					continue;
+				}
+				const parsedAddress = parseAddressLine(line);
+				if (parsedAddress.ok) {
+					events.push(addressEvent(parsedAddress.address));
+					addressSeen = true;
+				} else {
+					events.push(invalidEvent(line, parsedAddress.reason));
+				}
+				continue;
+			}
 			const parsed = parseItemLine(line);
 			events.push(parsed.ok ? itemEvent(parsed.item) : invalidEvent(line, parsed.reason));
 		}
 	}
-	return { events, state: { ndjson, finished, clientSeen } };
+	return { events, state: { ndjson, finished, clientSeen, emailSeen, addressSeen } };
 }
 
 /**
@@ -236,11 +296,14 @@ export function processUpstreamLines(lines: string[], state: PumpState): PumpBat
 export function flushUpstreamBuffer(state: PumpState): PumpBatchResult {
 	const trailing = state.ndjson.trim();
 	if (trailing === '') {
-		return { events: [], state: { ndjson: '', finished: true, clientSeen: state.clientSeen } };
+		return {
+			events: [],
+			state: { ndjson: '', finished: true, clientSeen: state.clientSeen, emailSeen: state.emailSeen, addressSeen: state.addressSeen }
+		};
 	}
 	if (isClientLine(trailing)) {
 		if (state.clientSeen) {
-			return { events: [], state: { ndjson: '', finished: true, clientSeen: true } };
+			return { events: [], state: { ndjson: '', finished: true, clientSeen: true, emailSeen: state.emailSeen, addressSeen: state.addressSeen } };
 		}
 		const parsedClient = parseClientLine(trailing);
 		const event = parsedClient.ok
@@ -248,14 +311,40 @@ export function flushUpstreamBuffer(state: PumpState): PumpBatchResult {
 			: invalidEvent(trailing, parsedClient.reason);
 		return {
 			events: [event],
-			state: { ndjson: '', finished: true, clientSeen: parsedClient.ok }
+			state: { ndjson: '', finished: true, clientSeen: parsedClient.ok, emailSeen: state.emailSeen, addressSeen: state.addressSeen }
+		};
+	}
+	if (isEmailLine(trailing)) {
+		if (state.emailSeen) {
+			return { events: [], state: { ndjson: '', finished: true, clientSeen: state.clientSeen, emailSeen: true, addressSeen: state.addressSeen } };
+		}
+		const parsedEmail = parseEmailLine(trailing);
+		const event = parsedEmail.ok
+			? emailEvent(parsedEmail.email)
+			: invalidEvent(trailing, parsedEmail.reason);
+		return {
+			events: [event],
+			state: { ndjson: '', finished: true, clientSeen: state.clientSeen, emailSeen: parsedEmail.ok, addressSeen: state.addressSeen }
+		};
+	}
+	if (isAddressLine(trailing)) {
+		if (state.addressSeen) {
+			return { events: [], state: { ndjson: '', finished: true, clientSeen: state.clientSeen, emailSeen: state.emailSeen, addressSeen: true } };
+		}
+		const parsedAddress = parseAddressLine(trailing);
+		const event = parsedAddress.ok
+			? addressEvent(parsedAddress.address)
+			: invalidEvent(trailing, parsedAddress.reason);
+		return {
+			events: [event],
+			state: { ndjson: '', finished: true, clientSeen: state.clientSeen, emailSeen: state.emailSeen, addressSeen: parsedAddress.ok }
 		};
 	}
 	const parsed = parseItemLine(state.ndjson);
 	const event = parsed.ok ? itemEvent(parsed.item) : invalidEvent(state.ndjson, parsed.reason);
 	return {
 		events: [event],
-		state: { ndjson: '', finished: true, clientSeen: state.clientSeen }
+		state: { ndjson: '', finished: true, clientSeen: state.clientSeen, emailSeen: state.emailSeen, addressSeen: state.addressSeen }
 	};
 }
 
@@ -263,37 +352,50 @@ export type ParsedItemLine = { ok: true; item: BudgetItem } | { ok: false; reaso
 
 export type ParsedClientLine = { ok: true; name: string } | { ok: false; reason: ErrorCode };
 
+export type ParsedEmailLine = { ok: true; email: string } | { ok: false; reason: ErrorCode };
+
+export type ParsedAddressLine = { ok: true; address: string } | { ok: false; reason: ErrorCode };
+
 /**
- * True when a parsed NDJSON line is a client mention: an object carrying a
- * string `client` field and none of the item fields. An object mixing
- * `client` with item fields is a budget item line, not a client mention.
+ * True when a parsed NDJSON line is a mention object carrying exactly one
+ * mention string field and none of the item fields. An object mixing a
+ * mention field with item fields is a budget item line, not a mention.
  */
-function isClientMentionObject(parsed: unknown): boolean {
+function isMentionObject(parsed: unknown, field: 'client' | 'email' | 'address'): boolean {
 	if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
 		return false;
 	}
 	const source = parsed as Record<string, unknown>;
 	return (
-		typeof source.client === 'string' &&
+		typeof source[field] === 'string' &&
 		!('description' in source) &&
 		!('quantity' in source) &&
 		!('unitPriceCents' in source)
 	);
 }
 
-/**
- * True when one complete NDJSON line is a client mention line. Unparseable
- * JSON and item-shaped lines are not client lines (they go down the item
- * path, where they surface their own validation reasons).
- */
+/** True when one complete NDJSON line is a client mention line. */
 export function isClientLine(line: string): boolean {
-	let parsed: unknown;
+	return isMentionObject(parseJsonLine(line), 'client');
+}
+
+/** True when one complete NDJSON line is an email mention line. */
+export function isEmailLine(line: string): boolean {
+	return isMentionObject(parseJsonLine(line), 'email');
+}
+
+/** True when one complete NDJSON line is an address mention line. */
+export function isAddressLine(line: string): boolean {
+	return isMentionObject(parseJsonLine(line), 'address');
+}
+
+/** JSON-parse a line, returning null for anything unparseable. */
+function parseJsonLine(line: string): unknown {
 	try {
-		parsed = JSON.parse(line);
+		return JSON.parse(line);
 	} catch {
-		return false;
+		return null;
 	}
-	return isClientMentionObject(parsed);
 }
 
 /**
@@ -303,13 +405,8 @@ export function isClientLine(line: string): boolean {
  * client-data code (same documented deviation as http.ts).
  */
 export function parseClientLine(line: string): ParsedClientLine {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(line);
-	} catch {
-		return { ok: false, reason: GENERIC_ERROR_CODE };
-	}
-	if (!isClientMentionObject(parsed)) {
+	const parsed = parseJsonLine(line);
+	if (!isMentionObject(parsed, 'client')) {
 		return { ok: false, reason: GENERIC_ERROR_CODE };
 	}
 	const name = ((parsed as Record<string, unknown>).client as string).trim();
@@ -318,6 +415,45 @@ export function parseClientLine(line: string): ParsedClientLine {
 		return { ok: false, reason: error };
 	}
 	return { ok: true, name };
+}
+
+/**
+ * Parse one complete email mention line, reusing the shared
+ * `validateClientEmail` exactly as budgets.ts does (empty means the model
+ * emitted junk, so it surfaces as EMAIL_INVALID — see `validateMentionEmail`).
+ * Callers must classify the line with `isEmailLine` first; a non-email line
+ * shares the generic client-data code (same documented deviation as http.ts).
+ */
+export function parseEmailLine(line: string): ParsedEmailLine {
+	const parsed = parseJsonLine(line);
+	if (!isMentionObject(parsed, 'email')) {
+		return { ok: false, reason: GENERIC_ERROR_CODE };
+	}
+	const error = validateMentionEmail((parsed as Record<string, unknown>).email as string);
+	if (error !== null) {
+		return { ok: false, reason: error };
+	}
+	return { ok: true, email: ((parsed as Record<string, unknown>).email as string).trim() };
+}
+
+/**
+ * Parse one complete address mention line, reusing the shared
+ * `validateClientAddress` exactly as budgets.ts does (empty means the model
+ * emitted junk, so it surfaces as ADDRESS_TOO_LONG — see
+ * `validateMentionAddress`). Callers must classify the line with
+ * `isAddressLine` first; a non-address line shares the generic client-data
+ * code (same documented deviation as http.ts).
+ */
+export function parseAddressLine(line: string): ParsedAddressLine {
+	const parsed = parseJsonLine(line);
+	if (!isMentionObject(parsed, 'address')) {
+		return { ok: false, reason: GENERIC_ERROR_CODE };
+	}
+	const error = validateMentionAddress((parsed as Record<string, unknown>).address as string);
+	if (error !== null) {
+		return { ok: false, reason: error };
+	}
+	return { ok: true, address: ((parsed as Record<string, unknown>).address as string).trim() };
 }
 
 /**
@@ -398,6 +534,16 @@ export function invalidEvent(line: string, reason: ErrorCode): string {
 /** Downstream SSE frame for a validated client mention (at most once per stream). */
 export function clientEvent(name: string): string {
 	return `${FRAME_PREFIX}${JSON.stringify({ type: 'client', client: { name } })}\n\n`;
+}
+
+/** Downstream SSE frame for a validated email mention (at most once per stream). */
+export function emailEvent(email: string): string {
+	return `${FRAME_PREFIX}${JSON.stringify({ type: 'email', email })}\n\n`;
+}
+
+/** Downstream SSE frame for a validated address mention (at most once per stream). */
+export function addressEvent(address: string): string {
+	return `${FRAME_PREFIX}${JSON.stringify({ type: 'address', address })}\n\n`;
 }
 
 /** Downstream SSE terminal frame: upstream finished cleanly. */

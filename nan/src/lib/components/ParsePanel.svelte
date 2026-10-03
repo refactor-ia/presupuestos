@@ -9,9 +9,13 @@
 		onitem: (item: BudgetItem) => void;
 		/** Called at most once per stream when the model detects a client mention. */
 		onclient?: (name: string) => void;
+		/** Called at most once per stream when the model detects an email mention. */
+		onemail?: (email: string) => void;
+		/** Called at most once per stream when the model detects an address mention. */
+		onaddress?: (address: string) => void;
 	}
 
-	let { onitem, onclient }: Props = $props();
+	let { onitem, onclient, onemail, onaddress }: Props = $props();
 
 	// Same cap the server applies to the parse text (see $lib/server/parse).
 	const TEXT_MAX = 2000;
@@ -107,6 +111,10 @@
 						onitem(parsedEvent.item);
 					} else if (parsedEvent.type === 'client') {
 						onclient?.(parsedEvent.client.name);
+					} else if (parsedEvent.type === 'email') {
+						onemail?.(parsedEvent.email);
+					} else if (parsedEvent.type === 'address') {
+						onaddress?.(parsedEvent.address);
 					} else if (parsedEvent.type === 'invalid') {
 						invalidCount += 1; // counted, never fatal
 					} else if (parsedEvent.type === 'error') {

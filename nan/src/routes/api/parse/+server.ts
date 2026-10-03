@@ -5,7 +5,9 @@
  * `gemma4`, `stream: true`) and pumps the upstream SSE chunks through the pure
  * helpers in `./parse`, re-emitting each completed NDJSON line downstream as an
  * SSE event: `client` for a client mention (at most once, first valid wins),
- * `item` for validated budget items, `invalid` for rejected lines (never
+ * `email` for an email mention and `address` for an address mention (same
+ * at-most-once, first-valid-wins rules), `item` for validated budget items,
+ * `invalid` for rejected lines (never
  * fatal), `done` only when upstream finishes cleanly and `error` when the
  * upstream fails mid-stream (no `done` after an error, so the client knows
  * the item list may be truncated). The API key never reaches the

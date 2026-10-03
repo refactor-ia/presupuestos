@@ -185,6 +185,35 @@
 		);
 	}
 
+	/** Fills the client email from a parsed email mention. Same never-overwrite
+	 *  rule as handleParsedClient: applies only when the field is empty after
+	 *  trim; otherwise a transient notice says the mention was dropped. */
+	function handleParsedEmail(email: string): void {
+		const trimmed = email.trim();
+		if (trimmed === '') return;
+		if (clientEmail.trim() === '') {
+			resetSaveFeedback();
+			clientEmail = trimmed;
+			return;
+		}
+		showSaveNotice('El texto mencionaba un email, pero el campo ya tiene uno. No se modificó.');
+	}
+
+	/** Fills the client address from a parsed address mention. Same
+	 *  never-overwrite rule as handleParsedClient (see above). */
+	function handleParsedAddress(address: string): void {
+		const trimmed = address.trim();
+		if (trimmed === '') return;
+		if (clientAddress.trim() === '') {
+			resetSaveFeedback();
+			clientAddress = trimmed;
+			return;
+		}
+		showSaveNotice(
+			'El texto mencionaba una dirección, pero el campo ya tiene una. No se modificó.'
+		);
+	}
+
 	const LOAD_OVERWRITE_CONFIRM =
 		'Hay datos en el formulario. ¿Cargar el presupuesto seleccionado y reemplazarlos?';
 
@@ -699,7 +728,13 @@
 			<p class="hint-text mb-4">
 				Escribí lo que necesita el cliente y los ítems se agregan a la tabla mientras se analizan.
 			</p>
-			<ParsePanel bind:this={parsePanel} onitem={handleParsedItem} onclient={handleParsedClient} />
+			<ParsePanel
+				bind:this={parsePanel}
+				onitem={handleParsedItem}
+				onclient={handleParsedClient}
+				onemail={handleParsedEmail}
+				onaddress={handleParsedAddress}
+			/>
 		</section>
 
 		<section class="card min-w-0" aria-labelledby="saved-heading">

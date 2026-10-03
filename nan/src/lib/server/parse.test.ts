@@ -3,6 +3,8 @@ import type { BudgetItem } from '$lib/domain/validate';
 import {
 	buildUpstreamBody,
 	clientEvent,
+	emailEvent,
+	addressEvent,
 	extractCompleteLines,
 	extractDeltaContent,
 	flushUpstreamBuffer,
@@ -15,6 +17,8 @@ import {
 	STREAM_INTERRUPTED_MESSAGE,
 	normalizeParseText,
 	parseClientLine,
+	parseEmailLine,
+	parseAddressLine,
 	parseItemLine,
 	processUpstreamLines,
 	SYSTEM_PROMPT,
@@ -147,6 +151,68 @@ describe('parseClientLine', () => {
 	});
 });
 
+/**
+ * Email mention lines: an NDJSON object with a single string `email` field
+ * (no item fields). A line mixing `email` with item fields is an item line.
+ */
+describe('parseEmailLine', () => {
+	it('parses a valid email line and trims it', () => {
+		expect(parseEmailLine('{"email":"  leo@selamastic.com "}')).toEqual({
+			ok: true,
+			email: 'leo@selamastic.com'
+		});
+	});
+
+	it('rejects an empty (whitespace) email with EMAIL_INVALID (model emitted junk)', () => {
+		expect(parseEmailLine('{"email":"   "}')).toEqual({ ok: false, reason: 'EMAIL_INVALID' });
+	});
+
+	it('rejects a malformed email with EMAIL_INVALID', () => {
+		expect(parseEmailLine('{"email":"not-an-email"}')).toEqual({
+			ok: false,
+			reason: 'EMAIL_INVALID'
+		});
+	});
+
+	it('rejects an email over 254 characters with EMAIL_TOO_LONG', () => {
+		const local = 'a'.repeat(250);
+		expect(parseEmailLine(JSON.stringify({ email: `${local}@example.com` }))).toEqual({
+			ok: false,
+			reason: 'EMAIL_TOO_LONG'
+		});
+	});
+});
+
+/**
+ * Address mention lines: an NDJSON object with a single string `address`
+ * field (no item fields). A line mixing `address` with item fields is an
+ * item line.
+ */
+describe('parseAddressLine', () => {
+	it('parses a valid address line and trims it verbatim', () => {
+		expect(parseAddressLine('{"address":"  av sarmiento 456 "}')).toEqual({
+			ok: true,
+			address: 'av sarmiento 456'
+		});
+	});
+
+	it('rejects an empty (whitespace) address (model emitted junk)', () => {
+		expect(parseAddressLine('{"address":"   "}').ok).toBe(false);
+	});
+
+	it('rejects an address over 240 characters with ADDRESS_TOO_LONG', () => {
+		expect(parseAddressLine(JSON.stringify({ address: 'a'.repeat(241) }))).toEqual({
+			ok: false,
+			reason: 'ADDRESS_TOO_LONG'
+		});
+	});
+
+	it('accepts an address of exactly 240 characters', () => {
+		const address = 'a'.repeat(240);
+		expect(parseAddressLine(JSON.stringify({ address }))).toEqual({ ok: true, address });
+	});
+});
+
 describe('event builders', () => {
 	it('itemEvent emits one SSE data frame with the item payload', () => {
 		const frame = itemEvent(validItem);
@@ -184,6 +250,28 @@ describe('event builders', () => {
 			client: { name: string };
 		};
 		expect(payload).toEqual({ type: 'client', client: { name: 'Leo Bidi' } });
+	});
+
+	it('emailEvent emits one SSE data frame with the email payload', () => {
+		const frame = emailEvent('leo@selamastic.com');
+		expect(frame.endsWith('\n\n')).toBe(true);
+		expect(frame.startsWith('data: ')).toBe(true);
+		const payload = JSON.parse(frame.slice('data: '.length)) as {
+			type: string;
+			email: string;
+		};
+		expect(payload).toEqual({ type: 'email', email: 'leo@selamastic.com' });
+	});
+
+	it('addressEvent emits one SSE data frame with the address payload', () => {
+		const frame = addressEvent('av sarmiento 456');
+		expect(frame.endsWith('\n\n')).toBe(true);
+		expect(frame.startsWith('data: ')).toBe(true);
+		const payload = JSON.parse(frame.slice('data: '.length)) as {
+			type: string;
+			address: string;
+		};
+		expect(payload).toEqual({ type: 'address', address: 'av sarmiento 456' });
 	});
 
 	it('errorEvent emits one SSE data frame with the given message', () => {
@@ -287,6 +375,207 @@ describe('processUpstreamLines', () => {
 		const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
 		expect(result.events).toHaveLength(1);
 		expect(framePayload(result.events[0])).toEqual({ type: 'invalid', line, reason: 'QUANTITY_INVALID' });
+	});
+
+	describe('email mention lines', () => {
+		it('emits an email event for a valid email line, trimming it', () => {
+			const result = processUpstreamLines(
+				[chunkLine('{"email":"  leo@selamastic.com "}\n')],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'email',
+				email: 'leo@selamastic.com'
+			});
+			expect(result.state.emailSeen).toBe(true);
+		});
+
+		it('emits an invalid event with EMAIL_INVALID for an empty email', () => {
+			const line = JSON.stringify({ email: '   ' });
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line,
+				reason: 'EMAIL_INVALID'
+			});
+			expect(result.state.emailSeen).toBe(false);
+		});
+
+		it('emits an invalid event with EMAIL_TOO_LONG for an over-long email', () => {
+			const line = JSON.stringify({ email: `${'a'.repeat(250)}@example.com` });
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line,
+				reason: 'EMAIL_TOO_LONG'
+			});
+		});
+
+		it('ignores later email lines after the first valid one (first valid wins)', () => {
+			const result = processUpstreamLines(
+				[
+					chunkLine('{"email":"leo@selamastic.com"}\n'),
+					chunkLine('{"email":"otro@example.com"}\n')
+				],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(1); // no invalid event for the later line
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'email',
+				email: 'leo@selamastic.com'
+			});
+		});
+
+		it('ignores later email lines split across batches (state carries emailSeen)', () => {
+			let state = initialPumpState();
+			const first = processUpstreamLines([chunkLine('{"email":"leo@selamastic.com"}\n')], state);
+			state = first.state;
+			const second = processUpstreamLines([chunkLine('{"email":"otro@example.com"}\n')], state);
+			expect(first.events).toHaveLength(1);
+			expect(second.events).toEqual([]);
+		});
+
+		it('emits invalid for the first (empty) email line and accepts a later valid one', () => {
+			const badLine = JSON.stringify({ email: '' });
+			const result = processUpstreamLines(
+				[chunkLine(`${badLine}\n`), chunkLine('{"email":"leo@selamastic.com"}\n')],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(2);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line: badLine,
+				reason: 'EMAIL_INVALID'
+			});
+			expect(framePayload(result.events[1])).toEqual({
+				type: 'email',
+				email: 'leo@selamastic.com'
+			});
+		});
+
+		it('treats an object mixing email with item fields as an item line', () => {
+			const line = JSON.stringify({
+				email: 'leo@selamastic.com',
+				description: 'Chorizos colorados',
+				quantity: 45,
+				unitPriceCents: 1500
+			});
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'item',
+				item: { description: 'Chorizos colorados', quantity: 45, unitPriceCents: 1500 }
+			});
+			expect(result.state.emailSeen).toBe(false);
+		});
+	});
+
+	describe('address mention lines', () => {
+		it('emits an address event for a valid address line, trimming it verbatim', () => {
+			const result = processUpstreamLines(
+				[chunkLine('{"address":"  av sarmiento 456 "}\n')],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'address',
+				address: 'av sarmiento 456'
+			});
+			expect(result.state.addressSeen).toBe(true);
+		});
+
+		it('emits an invalid event with ADDRESS_TOO_LONG for an over-long address', () => {
+			const line = JSON.stringify({ address: 'a'.repeat(241) });
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line,
+				reason: 'ADDRESS_TOO_LONG'
+			});
+			expect(result.state.addressSeen).toBe(false);
+		});
+
+		it('ignores later address lines after the first valid one (first valid wins)', () => {
+			const result = processUpstreamLines(
+				[
+					chunkLine('{"address":"av sarmiento 456"}\n'),
+					chunkLine('{"address":"otra calle 1"}\n')
+				],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(1); // no invalid event for the later line
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'address',
+				address: 'av sarmiento 456'
+			});
+		});
+
+		it('emits invalid for the first (empty) address line and accepts a later valid one', () => {
+			const badLine = JSON.stringify({ address: '' });
+			const result = processUpstreamLines(
+				[chunkLine(`${badLine}\n`), chunkLine('{"address":"av sarmiento 456"}\n')],
+				initialPumpState()
+			);
+			expect(result.events).toHaveLength(2);
+			expect(framePayload(result.events[0]).type).toBe('invalid');
+			expect(framePayload(result.events[1])).toEqual({
+				type: 'address',
+				address: 'av sarmiento 456'
+			});
+		});
+
+		it('treats an object mixing address with item fields as an item line', () => {
+			const line = JSON.stringify({
+				address: 'av sarmiento 456',
+				description: 'Chorizos colorados',
+				quantity: 45,
+				unitPriceCents: 1500
+			});
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'item',
+				item: { description: 'Chorizos colorados', quantity: 45, unitPriceCents: 1500 }
+			});
+			expect(result.state.addressSeen).toBe(false);
+		});
+	});
+
+	it('handles a realistic stream: client, email, address, items and [DONE]', () => {
+		const itemLine = JSON.stringify({
+			description: 'Chorizos de rueda',
+			quantity: 3,
+			unitPriceCents: 450000
+		});
+		const result = processUpstreamLines(
+			[
+				chunkLine('{"client":"Leo"}\n'),
+				chunkLine('{"email":"leo@selamastic.com"}\n'),
+				chunkLine('{"address":"av sarmiento 456"}\n'),
+				chunkLine(`${itemLine}\n`),
+				'data: [DONE]'
+			],
+			initialPumpState()
+		);
+		expect(result.events).toHaveLength(4);
+		expect(framePayload(result.events[0])).toEqual({ type: 'client', client: { name: 'Leo' } });
+		expect(framePayload(result.events[1])).toEqual({
+			type: 'email',
+			email: 'leo@selamastic.com'
+		});
+		expect(framePayload(result.events[2])).toEqual({
+			type: 'address',
+			address: 'av sarmiento 456'
+		});
+		expect(framePayload(result.events[3])).toEqual({
+			type: 'item',
+			item: { description: 'Chorizos de rueda', quantity: 3, unitPriceCents: 450000 }
+		});
+		expect(result.state.finished).toBe(true);
 	});
 
 	it('handles a realistic mixed stream: keep-alive, garbage line, items, [DONE]', () => {
@@ -470,6 +759,30 @@ describe('flushUpstreamBuffer', () => {
 		});
 		expect(flush.state.clientSeen).toBe(true);
 	});
+
+	it('flushes a trailing email line lacking the final newline', () => {
+		let state = initialPumpState();
+		state = processUpstreamLines([chunkLine('{"email":"leo@selamastic.com"}')], state).state;
+		const flush = flushUpstreamBuffer(state);
+		expect(flush.events).toHaveLength(1);
+		expect(framePayload(flush.events[0])).toEqual({
+			type: 'email',
+			email: 'leo@selamastic.com'
+		});
+		expect(flush.state.emailSeen).toBe(true);
+	});
+
+	it('flushes a trailing address line lacking the final newline', () => {
+		let state = initialPumpState();
+		state = processUpstreamLines([chunkLine('{"address":"av sarmiento 456"}')], state).state;
+		const flush = flushUpstreamBuffer(state);
+		expect(flush.events).toHaveLength(1);
+		expect(framePayload(flush.events[0])).toEqual({
+			type: 'address',
+			address: 'av sarmiento 456'
+		});
+		expect(flush.state.addressSeen).toBe(true);
+	});
 });
 
 describe('normalizeParseText', () => {
@@ -525,5 +838,12 @@ describe('upstream contract', () => {
 	it('system prompt instructs the at-most-once client line', () => {
 		expect(SYSTEM_PROMPT).toContain('"client"');
 		expect(SYSTEM_PROMPT).toContain('client name');
+	});
+
+	it('system prompt instructs the at-most-once email and address lines', () => {
+		expect(SYSTEM_PROMPT).toContain('"email"');
+		expect(SYSTEM_PROMPT).toContain('email address');
+		expect(SYSTEM_PROMPT).toContain('"address"');
+		expect(SYSTEM_PROMPT).toContain('no invention');
 	});
 });

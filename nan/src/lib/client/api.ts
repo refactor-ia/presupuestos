@@ -126,6 +126,8 @@ export async function deleteBudget(id: number): Promise<void> {
 export type ParseEvent =
 	| { type: 'item'; item: BudgetItem }
 	| { type: 'client'; client: { name: string } }
+	| { type: 'email'; email: string }
+	| { type: 'address'; address: string }
 	| { type: 'invalid'; line: string; reason: string }
 	| { type: 'error'; message: string }
 	| { type: 'done' };
@@ -185,6 +187,12 @@ function parseSseFrame(frame: string): ParseEvent | null {
 	}
 	if (event.type === 'client' && isClientNamePayload(event.client)) {
 		return { type: 'client', client: { name: (event.client as { name: string }).name } };
+	}
+	if (event.type === 'email' && typeof event.email === 'string') {
+		return { type: 'email', email: event.email };
+	}
+	if (event.type === 'address' && typeof event.address === 'string') {
+		return { type: 'address', address: event.address };
 	}
 	if (event.type === 'item' && isBudgetItem(event.item)) {
 		return { type: 'item', item: event.item };
