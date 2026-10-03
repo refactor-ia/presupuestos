@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { deleteBudget, listBudgets, type Budget } from '$lib/client/api';
+	import { ApiError, deleteBudget, listBudgets, type Budget } from '$lib/client/api';
 	import { motionDuration } from '$lib/motion';
 	import { fly } from 'svelte/transition';
 
@@ -17,6 +17,9 @@
 	let selectedId = $state('');
 	let listError = $state<string | null>(null);
 	let deleting = $state(false);
+	/** True while a list request is in flight; focus re-fetches are skipped
+	 *  instead of queued so returning to the tab never piles up requests. */
+	let refreshing = $state(false);
 
 	const selected = $derived(budgets.find((budget) => String(budget.id) === selectedId) ?? null);
 
@@ -33,6 +36,8 @@
 	}
 
 	async function refreshAsync(): Promise<void> {
+		if (refreshing) return; // a refresh is already in flight: its result is fresh enough
+		refreshing = true;
 		try {
 			budgets = await listBudgets();
 			listError = null;
@@ -42,6 +47,8 @@
 			}
 		} catch {
 			listError = 'No se pudo cargar la lista de presupuestos guardados.';
+		} finally {
+			refreshing = false;
 		}
 	}
 
@@ -53,13 +60,25 @@
 	async function handleDelete(): Promise<void> {
 		const budget = selected;
 		if (budget === null || deleting) return;
+		// Destructive action: explicit confirmation with number and client, so
+		// a mis-selected row is recoverable before the data is gone.
+		const confirmed = confirm(
+			`¿Eliminar el presupuesto ${budget.number} de ${budget.clientName}? Esta acción no se puede deshacer.`
+		);
+		if (!confirmed) return;
 		deleting = true;
 		try {
 			await deleteBudget(budget.id);
 			await refreshAsync();
 			ondelete?.(budget);
-		} catch {
-			listError = 'No se pudo eliminar el presupuesto seleccionado.';
+		} catch (error) {
+			// 404 means another session (or tab) deleted it first: say so instead
+			// of the generic failure, then refresh to drop the stale option.
+			listError =
+				error instanceof ApiError && error.status === 404
+					? 'Ese presupuesto ya no existe.'
+					: 'No se pudo eliminar el presupuesto seleccionado.';
+			if (error instanceof ApiError && error.status === 404) void refreshAsync();
 		} finally {
 			deleting = false;
 		}
@@ -71,6 +90,14 @@
 
 	onMount(() => {
 		void refreshAsync();
+		// The picker goes stale while the tab is in the background (another tab
+		// or session can save/delete). Re-fetch when the window regains focus;
+		// refreshAsync's in-flight guard debounces rapid focus events.
+		const handleFocus = (): void => {
+			void refreshAsync();
+		};
+		window.addEventListener('focus', handleFocus);
+		return () => window.removeEventListener('focus', handleFocus);
 	});
 </script>
 

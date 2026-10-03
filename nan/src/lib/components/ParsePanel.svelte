@@ -129,6 +129,17 @@
 			busy = false;
 		}
 	}
+
+	/** Clears the status line and stream counters without touching the drafted
+	 *  text. The page calls this after a saved budget load replaces the form
+	 *  content, so a stale "Listo: N ítems." never describes the new state. */
+	export function resetStatus(): void {
+		busy = false;
+		done = false;
+		itemCount = 0;
+		invalidCount = 0;
+		errorText = null;
+	}
 </script>
 
 <form class="space-y-4" onsubmit={handleSubmit}>
@@ -155,7 +166,7 @@
 				{errorText}
 			</p>
 		{:else}
-			<p class="field-error" id={statusId} aria-live="polite">{statusText ?? ''}</p>
+			<p class="field-hint" id={statusId} aria-live="polite">{statusText ?? ''}</p>
 		{/if}
 	</div>
 	<button
