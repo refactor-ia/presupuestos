@@ -107,6 +107,24 @@ describe('parseItemLine', () => {
 		expect(result).toEqual({ ok: false, reason: 'PRICE_BELOW_MINIMUM' });
 	});
 
+	// Contract: when the request mentions no price, the model outputs null
+	// instead of inventing one. Null is a validly shaped line that can never
+	// become an item: it surfaces as an invalid line (never a crash, never a
+	// silent skip, never an invented price).
+	it('rejects a null unitPriceCents with PRICE_BELOW_MINIMUM (no invented prices)', () => {
+		const result = parseItemLine(
+			'{"description":"Camarones al ajillo","quantity":6,"unitPriceCents":null}'
+		);
+		expect(result).toEqual({ ok: false, reason: 'PRICE_BELOW_MINIMUM' });
+	});
+
+	it('still rejects a missing unitPriceCents with PRICE_INVALID', () => {
+		expect(parseItemLine('{"description":"Clavos","quantity":1}')).toEqual({
+			ok: false,
+			reason: 'PRICE_INVALID'
+		});
+	});
+
 	it('rejects an empty description with ITEM_DESCRIPTION_REQUIRED', () => {
 		const result = parseItemLine(
 			itemLine({ description: '   ', quantity: 1, unitPriceCents: 100 })
@@ -375,6 +393,31 @@ describe('processUpstreamLines', () => {
 		const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
 		expect(result.events).toHaveLength(1);
 		expect(framePayload(result.events[0])).toEqual({ type: 'invalid', line, reason: 'QUANTITY_INVALID' });
+	});
+
+	describe('unpriced item lines (null price)', () => {
+		it('emits an invalid event with PRICE_BELOW_MINIMUM for a null-price line', () => {
+			const line = '{"description":"Camarones al ajillo","quantity":6,"unitPriceCents":null}';
+			const result = processUpstreamLines([chunkLine(`${line}\n`)], initialPumpState());
+			expect(result.events).toHaveLength(1);
+			expect(framePayload(result.events[0])).toEqual({
+				type: 'invalid',
+				line,
+				reason: 'PRICE_BELOW_MINIMUM'
+			});
+		});
+
+		it('emits the same invalid event when the null-price line is the trailing flush', () => {
+			let state = initialPumpState();
+			state = processUpstreamLines(
+				[chunkLine('{"description":"Camarones","quantity":1,"unitPriceCents":null}')],
+				state
+			).state;
+			const flush = flushUpstreamBuffer(state);
+			expect(flush.events).toHaveLength(1);
+			expect(framePayload(flush.events[0]).type).toBe('invalid');
+			expect(framePayload(flush.events[0]).reason).toBe('PRICE_BELOW_MINIMUM');
+		});
 	});
 
 	describe('email mention lines', () => {
@@ -845,5 +888,10 @@ describe('upstream contract', () => {
 		expect(SYSTEM_PROMPT).toContain('email address');
 		expect(SYSTEM_PROMPT).toContain('"address"');
 		expect(SYSTEM_PROMPT).toContain('no invention');
+	});
+
+	it('system prompt forbids inventing prices: unpriced items output unitPriceCents null', () => {
+		expect(SYSTEM_PROMPT).toContain('MUST NOT invent');
+		expect(SYSTEM_PROMPT).toContain('"unitPriceCents": null');
 	});
 });

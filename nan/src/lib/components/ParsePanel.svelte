@@ -57,10 +57,25 @@
 		itemCount = 0;
 		invalidCount = 0;
 		errorText = null;
+		let watchdogFired = false;
+		let watchdog: ReturnType<typeof setTimeout> | undefined;
 		try {
-			// Aborted by the inactivity timeout below: surface the same
-			// interruption message instead of a generic request failure.
 			const controller = new AbortController();
+			// Inactivity watchdog, armed across the WHOLE request (fetch +
+			// stream): no response headers or no downstream bytes for
+			// FRAME_TIMEOUT_MS abort the fetch and surface the interruption
+			// message. It must be armed before the fetch too — a slow upstream
+			// can hang before the response even starts (time-to-first-token is
+			// bimodal, 1.2s to 100s+), and the read loop below is only reached
+			// once the response has arrived.
+			const restartWatchdog = (): void => {
+				clearTimeout(watchdog);
+				watchdog = setTimeout(() => {
+					watchdogFired = true;
+					controller.abort();
+				}, FRAME_TIMEOUT_MS);
+			};
+			restartWatchdog();
 			const response = await fetch('/api/parse', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -73,34 +88,18 @@
 			}
 			// Read the SSE stream incrementally: every complete frame yields an
 			// event; the trailing partial frame stays buffered for the next chunk.
-			// A read that produces no frame within FRAME_TIMEOUT_MS aborts the
-			// fetch (upstream hang guard).
+			// Each received chunk re-arms the watchdog, so it only fires when no
+			// downstream bytes arrive for FRAME_TIMEOUT_MS (upstream hang guard).
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = '';
 			for (;;) {
-				const readPromise = reader.read();
-				// The loser of the race (typically the read after an abort or a
-				// timeout) must never surface as an unhandled rejection.
-				readPromise.catch(() => {});
-				let releaseTimer: (() => void) | undefined;
-				const timeoutPromise = new Promise<null>((resolve) => {
-					const timer = setTimeout(() => resolve(null), FRAME_TIMEOUT_MS);
-					releaseTimer = () => {
-						clearTimeout(timer);
-						releaseTimer = undefined;
-					};
-				});
-				const raced = await Promise.race([readPromise, timeoutPromise]);
-				releaseTimer?.();
-				if (raced === null) {
-					// No frame for 30s: give up on the upstream and report it.
-					controller.abort();
-					errorText = STREAM_INTERRUPTED;
-					break;
-				}
-				const { value, done: streamDone } = raced;
+				// When the watchdog aborts the fetch, the pending read (and every
+				// later one) rejects with an abort error, which the catch below
+				// turns into the interruption message — no Promise.race needed.
+				const { value, done: streamDone } = await reader.read();
 				if (streamDone) break;
+				restartWatchdog();
 				buffer += decoder.decode(value, { stream: true });
 				const parsed = parseSseChunk(buffer);
 				buffer = parsed.rest;
@@ -132,8 +131,11 @@
 				}
 			}
 		} catch {
-			errorText = PARSE_REQUEST_ERROR;
+			// A watchdog abort (hung upstream before the response or mid-stream)
+			// surfaces as the interruption message, never the generic failure.
+			errorText = watchdogFired ? STREAM_INTERRUPTED : PARSE_REQUEST_ERROR;
 		} finally {
+			clearTimeout(watchdog);
 			busy = false;
 		}
 	}

@@ -56,6 +56,7 @@ export const SYSTEM_PROMPT = [
 	'- "description": string in Spanish, what is being bought, at most 240 characters.',
 	'- "quantity": integer 1..9999.',
 	'- "unitPriceCents": positive integer 1..99999999, the unit price in cents (1 = 0,01).',
+	'If no price is mentioned for an item, you MUST NOT invent one: output that item line with "unitPriceCents": null instead of any price.',
 	'Never output anything except the JSON lines.'
 ].join('\n');
 
@@ -488,6 +489,14 @@ export function parseItemLine(line: string): ParsedItemLine {
 	}
 	// The grammar validation above guarantees a successful parse.
 	const quantity = parseQuantity(source.quantity) as number;
+
+	// A null price is the contract for an unpriced item (the model must not
+	// invent one): a validly shaped line that can never become an item. It
+	// surfaces as the existing below-minimum code so the panel counts it as
+	// an ignored line with its usual one-code-one-message mapping.
+	if (source.unitPriceCents === null) {
+		return { ok: false, reason: 'PRICE_BELOW_MINIMUM' };
+	}
 
 	// Integer cents round-trip through the display-price grammar (same
 	// normalization as budgets.ts priceToCents) so the 0,01 minimum and the
