@@ -26,6 +26,10 @@
 	const statusId = 'parse-status';
 	const PARSE_REQUEST_ERROR = 'No se pudo conectar con el analizador. Intentá de nuevo.';
 	const PARSE_RESPONSE_ERROR = 'El análisis falló. Intentá de nuevo.';
+	/** Same text the server sends on a mid-stream upstream failure. */
+	const STREAM_INTERRUPTED = 'El análisis se interrumpió. Los ítems mostrados pueden estar incompletos.';
+	/** Abort the fetch when no upstream frame arrives for this long. */
+	const FRAME_TIMEOUT_MS = 30_000;
 
 	// Live status line: parsing… → N ítems → done (+ invalid count). Reserved
 	// min-height keeps the composition stable across states.
@@ -50,10 +54,14 @@
 		invalidCount = 0;
 		errorText = null;
 		try {
+			// Aborted by the inactivity timeout below: surface the same
+			// interruption message instead of a generic request failure.
+			const controller = new AbortController();
 			const response = await fetch('/api/parse', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ text: trimmed })
+				body: JSON.stringify({ text: trimmed }),
+				signal: controller.signal
 			});
 			if (!response.ok || response.body === null) {
 				errorText = PARSE_RESPONSE_ERROR;
@@ -61,15 +69,38 @@
 			}
 			// Read the SSE stream incrementally: every complete frame yields an
 			// event; the trailing partial frame stays buffered for the next chunk.
+			// A read that produces no frame within FRAME_TIMEOUT_MS aborts the
+			// fetch (upstream hang guard).
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = '';
 			for (;;) {
-				const { value, done: streamDone } = await reader.read();
+				const readPromise = reader.read();
+				// The loser of the race (typically the read after an abort or a
+				// timeout) must never surface as an unhandled rejection.
+				readPromise.catch(() => {});
+				let releaseTimer: (() => void) | undefined;
+				const timeoutPromise = new Promise<null>((resolve) => {
+					const timer = setTimeout(() => resolve(null), FRAME_TIMEOUT_MS);
+					releaseTimer = () => {
+						clearTimeout(timer);
+						releaseTimer = undefined;
+					};
+				});
+				const raced = await Promise.race([readPromise, timeoutPromise]);
+				releaseTimer?.();
+				if (raced === null) {
+					// No frame for 30s: give up on the upstream and report it.
+					controller.abort();
+					errorText = STREAM_INTERRUPTED;
+					break;
+				}
+				const { value, done: streamDone } = raced;
 				if (streamDone) break;
 				buffer += decoder.decode(value, { stream: true });
 				const parsed = parseSseChunk(buffer);
 				buffer = parsed.rest;
+				let stop = false;
 				for (const parsedEvent of parsed.complete) {
 					if (parsedEvent.type === 'item') {
 						itemCount += 1;
@@ -78,12 +109,20 @@
 						onclient?.(parsedEvent.client.name);
 					} else if (parsedEvent.type === 'invalid') {
 						invalidCount += 1; // counted, never fatal
+					} else if (parsedEvent.type === 'error') {
+						// Upstream failure reported by the server: show it and stop
+						// reading. done stays false, so no "Listo" is ever shown.
+						errorText = parsedEvent.message;
+						stop = true;
 					} else if (parsedEvent.type === 'done') {
 						done = true;
 					}
 				}
+				if (stop) {
+					await reader.cancel().catch(() => {});
+					break;
+				}
 			}
-			done = true;
 		} catch {
 			errorText = PARSE_REQUEST_ERROR;
 		} finally {

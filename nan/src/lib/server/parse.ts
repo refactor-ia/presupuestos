@@ -30,6 +30,13 @@ export const UPSTREAM_URL = 'https://api.nan.builders/v1/chat/completions';
 /** Client text cap: at most 2000 characters after trim. */
 export const MAX_PARSE_TEXT_LENGTH = 2000;
 
+/**
+ * Downstream error-event text when the upstream fails mid-stream: it never
+ * says the analysis finished, because the emitted items may be incomplete.
+ */
+export const STREAM_INTERRUPTED_MESSAGE =
+	'El análisis se interrumpió. Los ítems mostrados pueden estar incompletos.';
+
 const GENERIC_ERROR_CODE: ErrorCode = 'EXPORT_CLIENT_INVALID';
 
 /**
@@ -393,7 +400,16 @@ export function clientEvent(name: string): string {
 	return `${FRAME_PREFIX}${JSON.stringify({ type: 'client', client: { name } })}\n\n`;
 }
 
-/** Downstream SSE terminal frame: upstream finished. */
+/** Downstream SSE terminal frame: upstream finished cleanly. */
 export function doneEvent(): string {
 	return `${FRAME_PREFIX}${JSON.stringify({ type: 'done' })}\n\n`;
+}
+
+/**
+ * Downstream SSE frame for a mid-stream upstream failure. It replaces the
+ * `done` frame (never emitted together with it) so the client knows the
+ * item list may be truncated.
+ */
+export function errorEvent(message: string): string {
+	return `${FRAME_PREFIX}${JSON.stringify({ type: 'error', message })}\n\n`;
 }

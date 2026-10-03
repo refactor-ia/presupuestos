@@ -127,6 +127,7 @@ export type ParseEvent =
 	| { type: 'item'; item: BudgetItem }
 	| { type: 'client'; client: { name: string } }
 	| { type: 'invalid'; line: string; reason: string }
+	| { type: 'error'; message: string }
 	| { type: 'done' };
 
 /**
@@ -171,6 +172,9 @@ function parseSseFrame(frame: string): ParseEvent | null {
 	const event = parsed as Record<string, unknown>;
 	if (event.type === 'done') {
 		return { type: 'done' };
+	}
+	if (event.type === 'error' && typeof event.message === 'string') {
+		return { type: 'error', message: event.message };
 	}
 	if (event.type === 'invalid' && typeof event.line === 'string') {
 		return {

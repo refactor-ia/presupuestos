@@ -6,7 +6,9 @@
  * helpers in `./parse`, re-emitting each completed NDJSON line downstream as an
  * SSE event: `client` for a client mention (at most once, first valid wins),
  * `item` for validated budget items, `invalid` for rejected lines (never
- * fatal) and `done` when upstream finishes. The API key never reaches the
+ * fatal), `done` only when upstream finishes cleanly and `error` when the
+ * upstream fails mid-stream (no `done` after an error, so the client knows
+ * the item list may be truncated). The API key never reaches the
  * client, so this must stay server-side.
  */
 
@@ -17,10 +19,12 @@ import {
 	buildUpstreamBody,
 	flushUpstreamBuffer,
 	doneEvent,
+	errorEvent,
 	extractCompleteLines,
 	initialPumpState,
 	normalizeParseText,
-	processUpstreamLines
+	processUpstreamLines,
+	STREAM_INTERRUPTED_MESSAGE
 } from '$lib/server/parse';
 import {
 	GENERIC_ERROR_CODE,
@@ -78,6 +82,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			let sseBuffer = '';
 			// Pump state: accumulated model NDJSON text + [DONE] flag.
 			let pump = initialPumpState();
+			// True when the upstream failed mid-stream (read error): the client
+			// then gets the error frame instead of `done`, never both.
+			let upstreamFailed = false;
 			try {
 				const reader = upstream.body!.getReader();
 				const decoder = new TextDecoder();
@@ -98,14 +105,24 @@ export const POST: RequestHandler = async ({ request }) => {
 						break;
 					}
 				}
+			} catch {
+				// Upstream fetch/read failed while pumping: report the
+				// interruption instead of pretending the stream finished. The
+				// partially buffered NDJSON line is intentionally discarded
+				// (an incomplete line is never a valid item).
+				upstreamFailed = true;
 			} finally {
-				// Upstream end or [DONE]: emit the model's final NDJSON line
-				// (it may lack a trailing newline), then the terminal event.
-				const flush = flushUpstreamBuffer(pump);
-				for (const frame of flush.events) {
-					controller.enqueue(encoder.encode(frame));
+				if (upstreamFailed) {
+					controller.enqueue(encoder.encode(errorEvent(STREAM_INTERRUPTED_MESSAGE)));
+				} else {
+					// Clean upstream end or [DONE]: emit the model's final NDJSON
+					// line (it may lack a trailing newline), then the terminal event.
+					const flush = flushUpstreamBuffer(pump);
+					for (const frame of flush.events) {
+						controller.enqueue(encoder.encode(frame));
+					}
+					controller.enqueue(encoder.encode(doneEvent()));
 				}
-				controller.enqueue(encoder.encode(doneEvent()));
 				controller.close();
 			}
 		}

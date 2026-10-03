@@ -138,6 +138,26 @@ describe('parseSseChunk', () => {
 		expect(complete).toEqual<ParseEvent[]>([{ type: 'done' }]);
 	});
 
+	it('parses an error event and forwards its message', () => {
+		const { complete, rest } = parseSseChunk(
+			sseFrame({ type: 'error', message: 'El análisis se interrumpió.' })
+		);
+		expect(complete).toEqual<ParseEvent[]>([
+			{ type: 'error', message: 'El análisis se interrumpió.' }
+		]);
+		expect(rest).toBe('');
+	});
+
+	it('drops error events with a malformed payload instead of throwing', () => {
+		const chunk =
+			sseFrame({ type: 'error' }) +
+			sseFrame({ type: 'error', message: 42 }) +
+			sseFrame({ type: 'error', message: null }) +
+			sseFrame({ type: 'done' });
+		const { complete } = parseSseChunk(chunk);
+		expect(complete).toEqual<ParseEvent[]>([{ type: 'done' }]);
+	});
+
 	it('parses a client event with its name payload', () => {
 		const { complete, rest } = parseSseChunk(
 			sseFrame({ type: 'client', client: { name: 'Leo Bidi' } })

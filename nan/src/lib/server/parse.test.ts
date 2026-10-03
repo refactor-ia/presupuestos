@@ -11,6 +11,8 @@ import {
 	itemEvent,
 	invalidEvent,
 	doneEvent,
+	errorEvent,
+	STREAM_INTERRUPTED_MESSAGE,
 	normalizeParseText,
 	parseClientLine,
 	parseItemLine,
@@ -182,6 +184,24 @@ describe('event builders', () => {
 			client: { name: string };
 		};
 		expect(payload).toEqual({ type: 'client', client: { name: 'Leo Bidi' } });
+	});
+
+	it('errorEvent emits one SSE data frame with the given message', () => {
+		const frame = errorEvent('Algo salió mal');
+		expect(frame.endsWith('\n\n')).toBe(true);
+		expect(frame.startsWith('data: ')).toBe(true);
+		const payload = JSON.parse(frame.slice('data: '.length)) as {
+			type: string;
+			message: string;
+		};
+		expect(payload).toEqual({ type: 'error', message: 'Algo salió mal' });
+	});
+
+	it('STREAM_INTERRUPTED_MESSAGE tells the user the stream was cut short', () => {
+		expect(STREAM_INTERRUPTED_MESSAGE).toBe(
+			'El análisis se interrumpió. Los ítems mostrados pueden estar incompletos.'
+		);
+		expect(STREAM_INTERRUPTED_MESSAGE).not.toContain('Listo');
 	});
 });
 
