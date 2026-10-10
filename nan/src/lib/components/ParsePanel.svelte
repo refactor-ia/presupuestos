@@ -13,15 +13,16 @@
 		onemail?: (email: string) => void;
 		/** Called at most once per stream when the model detects an address mention. */
 		onaddress?: (address: string) => void;
+		/** Mirrors the stream's in-flight state so the table can show skeleton rows. */
+		busy?: boolean;
 	}
 
-	let { onitem, onclient, onemail, onaddress }: Props = $props();
+	let { onitem, onclient, onemail, onaddress, busy = $bindable(false) }: Props = $props();
 
 	// Same cap the server applies to the parse text (see $lib/server/parse).
 	const TEXT_MAX = 2000;
 
 	let text = $state('');
-	let busy = $state(false);
 	let done = $state(false);
 	let itemCount = $state(0);
 	let invalidCount = $state(0);
@@ -268,87 +269,103 @@
 </script>
 
 <form class="space-y-4" onsubmit={handleSubmit}>
-	<div class="flex flex-col">
-		<label class="field-label" for="parse-text">Descripción en lenguaje natural</label>
-		<div class="flex items-end gap-2">
+	<div class="flex items-start gap-3">
+		{#if canDictate}
+			<!-- Mic: pulsing rings while recording, spinner while transcribing. -->
+			<div class="relative mt-7 size-[52px] shrink-0">
+				{#if dictation === 'recording'}
+					<span class="mic-ring"></span>
+					<span class="mic-ring mic-ring-delayed"></span>
+				{/if}
+				<button
+					type="button"
+					id={micId}
+					class="btn-icon relative size-[52px]"
+					class:bg-brand={dictation === 'recording'}
+					class:text-brand-fg={dictation === 'recording'}
+					onclick={toggleDictation}
+					disabled={busy || dictation === 'transcribing'}
+					aria-pressed={dictation === 'recording'}
+					aria-label={dictation === 'recording'
+						? 'Detener grabación'
+						: dictation === 'transcribing'
+							? 'Transcribiendo audio'
+							: 'Dictar por voz'}
+					aria-describedby={statusId}
+				>
+					{#if dictation === 'recording'}
+						<svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+							<rect x="6" y="6" width="12" height="12" rx="2" />
+						</svg>
+					{:else if dictation === 'transcribing'}
+						<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+				<path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+			</svg>
+					{:else}
+						<svg xmlns="http://www.w3.org/2000/svg" class="size-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<rect x="9" y="3" width="6" height="12" rx="3" />
+							<path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
+						</svg>
+					{/if}
+				</button>
+			</div>
+		{/if}
+		<div class="flex min-w-0 flex-1 flex-col">
+			<div class="flex items-baseline justify-between gap-2">
+				<label class="field-label" for="parse-text">Describí el trabajo</label>
+				{#if dictation === 'recording'}
+					<span class="flex items-center gap-2 text-xs text-fg-2">
+						<span class="level-bars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></span>
+						Escuchando…
+					</span>
+				{/if}
+			</div>
 			<textarea
 				id="parse-text"
 				bind:value={text}
-				class="field-input h-auto! min-h-24 resize-y flex-1 py-2"
+				class="field-input h-auto! min-h-24 resize-y py-3 leading-normal"
 				maxlength={TEXT_MAX}
 				placeholder="Ej.: Necesito 3 logos a $ 10,55 cada uno y una impresión de 10 afiches a $ 1"
 				disabled={busy}
 			></textarea>
-			{#if canDictate}
-				<button
-					type="button"
-					id={micId}
-					class="btn btn-secondary shrink-0 self-start"
-					onclick={toggleDictation}
-					disabled={busy || dictation === 'transcribing'}
-					aria-pressed={dictation === 'recording'}
-					aria-label={
-						dictation === 'recording'
-							? 'Detener grabación'
-							: dictation === 'transcribing'
-								? 'Transcribiendo audio'
-								: 'Dictar por voz'
-						}
-					aria-describedby={statusId}
-				>
-					{#if dictation === 'recording'}
-						<svg xmlns="http://www.w3.org/2000/svg" class="size-4 animate-pulse text-red-600 dark:text-red-400" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-							<rect x="6" y="6" width="12" height="12" rx="2" />
-						</svg>
-						Detener
-					{:else if dictation === 'transcribing'}
-						<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-							<path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
-						</svg>
-						Transcribiendo…
-					{:else}
-						<svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
-							<path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-							<line x1="12" y1="19" x2="12" y2="22" />
-						</svg>
-						Dictar
-					{/if}
-				</button>
-			{/if}
 		</div>
 	</div>
 	<!-- Reserved slot: status / error swap in place without shifting the button. -->
-	<div class="min-h-5">
-		{#if errorText !== null}
-			<p
-				class="text-sm text-red-600 dark:text-red-400"
-				id={statusId}
-				role="alert"
-				in:fly={{ y: 4, duration: motionDuration(200) }}
-			>
-				{errorText}
-			</p>
-		{:else}
-			<p class="field-hint" id={statusId} aria-live="polite">{statusText ?? ''}</p>
-		{/if}
-	</div>
-	<button
-		type="submit"
-		class="btn btn-primary w-full sm:w-auto"
-		disabled={busy || text.trim() === ''}
-		aria-busy={busy}
-		aria-describedby={statusId}
-	>
-		{#if busy}
-			<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+	<div class="flex items-start justify-between gap-4">
+		<div class="min-h-5 min-w-0 flex-1">
+			{#if errorText !== null}
+				<p
+					class="text-sm text-danger"
+					id={statusId}
+					role="alert"
+					in:fly={{ y: 4, duration: motionDuration(200) }}
+				>
+					{errorText}
+				</p>
+			{:else}
+				<p class="field-hint" id={statusId} aria-live="polite">{statusText ?? ''}</p>
+			{/if}
+		</div>
+		<button
+			type="submit"
+			class="btn btn-primary shrink-0"
+			disabled={busy || text.trim() === ''}
+			aria-busy={busy}
+			aria-describedby={statusId}
+		>
+			{#if busy}
+				<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
 				<path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
 			</svg>
-			Analizando…
-		{:else}
-			Analizar texto
-		{/if}
-	</button>
+				Analizando…
+			{:else}
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+				</svg>
+				Analizar texto
+			{/if}
+		</button>
+	</div>
 </form>

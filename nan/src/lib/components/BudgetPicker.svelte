@@ -121,7 +121,7 @@
 		{#if listError !== null}
 			<p
 				id="saved-budgets-error"
-				class="text-sm text-red-600 dark:text-red-400"
+				class="text-sm text-danger"
 				role="alert"
 				in:fly={{ y: 4, duration: motionDuration(200) }}
 			>

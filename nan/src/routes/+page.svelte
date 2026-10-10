@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import TextField from '$lib/components/TextField.svelte';
@@ -7,6 +7,8 @@
 	import Totals from '$lib/components/Totals.svelte';
 	import ParsePanel from '$lib/components/ParsePanel.svelte';
 	import BudgetPicker from '$lib/components/BudgetPicker.svelte';
+	import Toast from '$lib/components/Toast.svelte';
+	import ConfettiBurst from '$lib/components/ConfettiBurst.svelte';
 	import { ApiError, saveBudget, updateBudget, sendBudgetEmail, type Budget, type BudgetPayload } from '$lib/client/api';
 	import { formatLongDate } from '$lib/date';
 	import { motionDuration, prefersReducedMotion } from '$lib/motion';
@@ -95,6 +97,60 @@
 	let quantityTouched = $state(false);
 	let priceTouched = $state(false);
 	let descriptionInput = $state<HTMLInputElement>();
+	let addShakeKey = $state(0);
+
+	// --- Reward layer: toast, confetti, copy-to-clipboard -------------------
+
+	let toastText = $state<string | null>(null);
+	let toastSeq = $state(0);
+	let toastTimer: ReturnType<typeof setTimeout> | undefined;
+	const TOAST_MS = 2_600;
+
+	/** Transient confirmation. Every message also lands in a reserved slot,
+	 *  so the toast is reinforcement, never the only channel. */
+	function showToast(text: string): void {
+		toastText = text;
+		toastSeq += 1;
+		clearTimeout(toastTimer);
+		toastTimer = setTimeout(() => (toastText = null), TOAST_MS);
+	}
+
+	let confettiTrigger = $state(0);
+	let presCopied = $state(false);
+	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** Copies the session number. The Clipboard API exists only in secure
+	 *  contexts, so plain-HTTP evaluation URLs fall back to execCommand. */
+	async function copyPresId(): Promise<void> {
+		if (presId === null) return;
+		let ok = false;
+		try {
+			if (navigator.clipboard && window.isSecureContext) {
+				await navigator.clipboard.writeText(presId);
+				ok = true;
+			}
+		} catch {
+			ok = false;
+		}
+		if (!ok) {
+			const area = document.createElement('textarea');
+			area.value = presId;
+			area.setAttribute('readonly', '');
+			area.style.position = 'fixed';
+			area.style.opacity = '0';
+			document.body.appendChild(area);
+			area.select();
+			ok = document.execCommand('copy');
+			area.remove();
+		}
+		if (!ok) return;
+		presCopied = true;
+		showToast('Número copiado');
+		clearTimeout(copiedTimer);
+		copiedTimer = setTimeout(() => (presCopied = false), 1_800);
+	}
+
+	let parseBusy = $state(false);
 
 	// Live counter ceiling: mirrors validateItemDescription's 240-char limit;
 	// submit-time validation stays the single enforcement point.
@@ -117,7 +173,10 @@
 		const descriptionCode = validateItemDescription(itemDescription);
 		const quantityCode = validateItemQuantity(itemQuantity);
 		const priceCode = validateItemUnitPrice(itemUnitPrice);
-		if (descriptionCode !== null || quantityCode !== null || priceCode !== null) return;
+		if (descriptionCode !== null || quantityCode !== null || priceCode !== null) {
+			addShakeKey += 1; // replay the shake on every invalid attempt
+			return;
+		}
 		resetSaveFeedback();
 		items.push({
 			description: itemDescription.trim(),
@@ -134,6 +193,7 @@
 		quantityTouched = false;
 		priceTouched = false;
 		descriptionInput?.focus(); // keep a usable field focused after the row enters (INV-07)
+		showToast('Ítem agregado');
 	}
 
 	function handleRemoveItem(index: number): void {
@@ -418,6 +478,7 @@
 			await sendBudgetEmail(id, sendEmail.trim());
 			sendPhase = 'success';
 			sendText = wasDirty ? `Guardado y enviado a ${sendEmail.trim()}.` : `Enviado a ${sendEmail.trim()}.`;
+			showToast(`Enviado a ${sendEmail.trim()}`);
 		} catch (error) {
 			sendPhase = 'error';
 			sendText = error instanceof ApiError && error.message !== '' ? error.message : SEND_ERROR_FALLBACK;
@@ -466,6 +527,7 @@
 			// Success echoes the session number, so the user can match the
 			// saved row in the picker without hunting for it.
 			showSaveSuccess(`Guardado como ${sessionNumber}.`);
+			showToast(`Guardado como ${sessionNumber}`);
 			picker?.refresh(); // the saved budget appears in the list immediately
 		} catch (error) {
 			// The API surfaces the Spanish { code, message } contract: render its
@@ -593,6 +655,8 @@
 	onDestroy(() => {
 		clearTimeout(phaseHoldTimer);
 		clearSaveFeedbackTimer();
+		clearTimeout(toastTimer);
+		clearTimeout(copiedTimer);
 		exportFlow.dispose();
 	});
 
@@ -607,6 +671,16 @@
 			? `Descarga iniciada: ${pdfFilenameFor(presId)}`
 			: null
 	);
+	// Reward on a started download: confetti burst + toast, success only.
+	$effect(() => {
+		const text = exportSuccessText;
+		if (text === null) return;
+		untrack(() => {
+			confettiTrigger += 1;
+			showToast(text);
+		});
+	});
+
 	const EXPORT_ERROR_TEXT =
 		'No se pudo generar el PDF. Tus datos siguen intactos; probá de nuevo.';
 </script>
@@ -616,46 +690,107 @@
 	<meta name="description" content="Armá un presupuesto de cliente y revisá sus importes." />
 </svelte:head>
 
-<main class="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
-	<header class="mb-6 flex items-start justify-between gap-4">
-		<div>
-			<p class="text-xs font-semibold tracking-widest text-slate-600 uppercase dark:text-zinc-400">
-				Presupuesto
-			</p>
-			<p class="mt-1 text-2xl font-bold text-slate-900 tabular-nums dark:text-zinc-50" aria-live="polite">
+{#snippet spinner()}
+	<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+		<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+		<path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+	</svg>
+{/snippet}
+
+{#snippet checkIcon()}
+	<svg class="check-draw mt-0.5 size-4 shrink-0" viewBox="0 0 16 16" aria-hidden="true">
+		<path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+	</svg>
+{/snippet}
+
+{#snippet alertIcon()}
+	<svg class="mt-0.5 size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" />
+	</svg>
+{/snippet}
+
+<header class="sticky top-0 z-40 border-b border-line backdrop-blur-md" style="background: color-mix(in lab, var(--bg) 82%, transparent);">
+	<div class="mx-auto flex w-full max-w-7xl items-center gap-3 px-4 py-3 sm:gap-4 sm:px-6">
+		<div class="flex flex-1 items-center gap-2.5">
+			<svg class="size-8 shrink-0" viewBox="0 0 32 32" aria-hidden="true">
+				<rect width="32" height="32" rx="9" fill="var(--brand)" />
+				<path d="M9 22V10l7 9V10M23 10v12" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			<span class="text-[17px] font-bold tracking-[var(--tracking-tight)]">NaN</span>
+			<span class="hidden text-sm text-fg-2 sm:inline">Presupuestos</span>
+		</div>
+		<!-- Session number: the first thing to identify (design.md hierarchy). -->
+		<button
+			type="button"
+			class="chip"
+			onclick={copyPresId}
+			disabled={presId === null}
+			aria-label={presId === null ? 'Número de presupuesto' : `Copiar número ${presId}`}
+		>
+			<span aria-live="polite">
 				{#if presId === null}
 					PRES-······
 				{:else}
 					{#key presId}
-						<!-- F-02: the placeholder→real id swap materializes with a short
-						     fade/scale on first render so hydration reads as
-						     intentional; collapsed by the reduced-motion guard. -->
-						<span class="inline-block materialize">{presId}</span>
+						<span class="materialize inline-block">{presId}</span>
 					{/key}
 				{/if}
-			</p>
-			{#if issueDateText}
-				<!-- Same shared date module the PDF uses: one export, one visible date. -->
-				<p class="mt-1 text-sm text-slate-600 dark:text-zinc-400">{issueDateText}</p>
+			</span>
+			{#if presCopied}
+				<svg class="check-draw size-4" viewBox="0 0 16 16" aria-hidden="true">
+					<path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+			{:else}
+				<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+					<rect x="5" y="5" width="8" height="8" rx="2" /><path d="M3 10.5V4a1 1 0 0 1 1-1h6.5" />
+				</svg>
 			{/if}
-		</div>
+		</button>
 		<ThemeToggle />
-	</header>
+	</div>
+</header>
 
-	<div class="grid items-start gap-6 lg:grid-cols-2">
-		<section class="card min-w-0" aria-labelledby="client-heading">
-			<h2 id="client-heading" class="card-title">Cliente</h2>
-			<div class="space-y-4">
-				<TextField
-					id="client-name"
-					label="Nombre"
-					bind:value={clientName}
-					error={nameError}
-					required
-					autocomplete="organization"
-					onblur={() => (nameTouched = true)}
+<main class="mx-auto w-full max-w-7xl px-4 pt-8 pb-24 sm:px-6 sm:pt-10">
+	<div class="mb-8 flex flex-wrap items-end gap-x-6 gap-y-3">
+		<div class="flex-1">
+			<p class="eyebrow">
+				Presupuesto{#if issueDateText}<span> · {issueDateText}</span>{/if}
+			</p>
+			<h1 class="mt-2.5 text-4xl leading-none font-medium tracking-[var(--tracking-tight)] sm:text-5xl">
+				Armá tu presupuesto
+			</h1>
+		</div>
+		<p class="max-w-sm text-[15px] leading-normal text-fg-2">
+			Dictalo, describilo o cargalo a mano. Los totales se actualizan al instante.
+		</p>
+	</div>
+
+	<div class="flex flex-wrap items-start gap-6">
+		<div class="flex min-w-0 flex-[999_1_560px] flex-col gap-6">
+			<section class="card" aria-labelledby="parse-heading">
+				<h2 id="parse-heading" class="card-title">Analizar texto</h2>
+				<ParsePanel
+					bind:this={parsePanel}
+					bind:busy={parseBusy}
+					onitem={handleParsedItem}
+					onclient={handleParsedClient}
+					onemail={handleParsedEmail}
+					onaddress={handleParsedAddress}
 				/>
-				<div class="grid gap-4 sm:grid-cols-2">
+			</section>
+
+			<section class="card" aria-labelledby="client-heading">
+				<h2 id="client-heading" class="card-title">Cliente</h2>
+				<div class="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+					<TextField
+						id="client-name"
+						label="Nombre"
+						bind:value={clientName}
+						error={nameError}
+						required
+						autocomplete="organization"
+						onblur={() => (nameTouched = true)}
+					/>
 					<TextField
 						id="client-email"
 						label="Email"
@@ -667,6 +802,15 @@
 						onblur={() => (emailTouched = true)}
 					/>
 					<TextField
+						id="client-address"
+						label="Dirección"
+						bind:value={clientAddress}
+						error={addressError}
+						optional
+						autocomplete="street-address"
+						onblur={() => (addressTouched = true)}
+					/>
+					<TextField
 						id="client-rut"
 						label="RUT"
 						bind:value={clientRut}
@@ -676,336 +820,263 @@
 						onblur={() => (rutTouched = true)}
 					/>
 				</div>
-				<TextField
-					id="client-address"
-					label="Dirección"
-					bind:value={clientAddress}
-					error={addressError}
-					optional
-					autocomplete="street-address"
-					onblur={() => (addressTouched = true)}
-				/>
-			</div>
+			</section>
 
-			<h2 class="card-title mt-8">Agregar ítem</h2>
-			<form
-				class="space-y-4"
-				onsubmit={(event) => {
-					event.preventDefault();
-					handleAddItem();
-				}}
-			>
-				<TextField
-					id="item-description"
-					label="Descripción"
-					bind:value={itemDescription}
-					error={descriptionError}
-					placeholder="Ej.: Diseño web"
-					counter={{ current: itemDescription.length, max: DESCRIPTION_MAX }}
-					onblur={() => (descriptionTouched = true)}
-					bind:inputEl={descriptionInput}
-				/>
-				<div class="grid gap-4 sm:grid-cols-2">
-					<TextField
-						id="item-quantity"
-						label="Cantidad"
-						bind:value={itemQuantity}
-						error={quantityError}
-						inputmode="numeric"
-						placeholder="Ej.: 3"
-						onblur={() => (quantityTouched = true)}
-					/>
-					<TextField
-						id="item-price"
-						label="Precio unitario"
-						bind:value={itemUnitPrice}
-						error={priceError}
-						inputmode="decimal"
-						placeholder="Ej.: 10,55"
-						onblur={() => (priceTouched = true)}
-					/>
+			<section class="card" aria-labelledby="summary-heading">
+				<div class="mb-2 flex items-baseline justify-between gap-4">
+					<h2 id="summary-heading" class="card-title mb-0">Ítems</h2>
+					<span class="num text-[13px] text-fg-2">{items.length} {items.length === 1 ? 'ítem' : 'ítems'}</span>
 				</div>
-				<!-- Reserved slot for the item limit message: never shifts the button. -->
-				<p class="field-error" aria-live="polite">{itemLimitMessage ?? ''}</p>
-				<button type="submit" class="btn btn-primary w-full sm:w-auto">Agregar ítem</button>
-			</form>
-		</section>
+				<ItemsTable items={rows} onremove={handleRemoveItem} loading={parseBusy} />
 
-		<section class="card min-w-0" aria-labelledby="summary-heading">
-			<h2 id="summary-heading" class="card-title">Ítems</h2>
-			<ItemsTable items={rows} onremove={handleRemoveItem} />
-			<Totals subtotalCents={subtotal} ivaCents={iva} totalCents={total} />
-			<div class="mt-6">
+				<form
+					class="mt-5 rounded-[var(--radius-main)] border border-dashed border-line bg-bg p-4"
+					aria-labelledby="add-heading"
+					onsubmit={(event) => {
+						event.preventDefault();
+						handleAddItem();
+					}}
+				>
+					<h3 id="add-heading" class="eyebrow mb-3">Agregar ítem</h3>
+					<div class="grid gap-x-3 sm:grid-cols-[minmax(0,1fr)_7rem_9rem]">
+						<TextField
+							id="item-description"
+							label="Descripción"
+							bind:value={itemDescription}
+							error={descriptionError}
+							placeholder="Ej.: Diseño web"
+							counter={{ current: itemDescription.length, max: DESCRIPTION_MAX }}
+							onblur={() => (descriptionTouched = true)}
+							bind:inputEl={descriptionInput}
+							shakeKey={addShakeKey}
+						/>
+						<TextField
+							id="item-quantity"
+							label="Cantidad"
+							bind:value={itemQuantity}
+							error={quantityError}
+							inputmode="numeric"
+							placeholder="Ej.: 3"
+							onblur={() => (quantityTouched = true)}
+							shakeKey={addShakeKey}
+							inputClass="num text-right"
+						/>
+						<TextField
+							id="item-price"
+							label="Precio unitario"
+							bind:value={itemUnitPrice}
+							error={priceError}
+							inputmode="decimal"
+							placeholder="Ej.: 10,55"
+							onblur={() => (priceTouched = true)}
+							shakeKey={addShakeKey}
+							inputClass="num text-right"
+						/>
+					</div>
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<!-- Reserved slot for the item limit message: never shifts the button. -->
+						<p class="field-error mt-0" aria-live="polite">{itemLimitMessage ?? ''}</p>
+						<button type="submit" class="btn btn-primary w-full sm:w-auto">
+							<svg class="size-4" viewBox="0 0 16 16" aria-hidden="true">
+								<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+							</svg>
+							Agregar ítem
+						</button>
+					</div>
+				</form>
+			</section>
+		</div>
+
+		<aside class="flex min-w-0 flex-[1_1_340px] flex-col gap-6 lg:sticky lg:top-24">
+			<section class="card relative overflow-hidden p-6 sm:p-7" aria-labelledby="totals-heading">
+				<h2 id="totals-heading" class="sr-only">Totales y exportación</h2>
+				<div
+					class="pointer-events-none absolute -top-16 -right-16 size-52 rounded-full"
+					style="background: radial-gradient(circle, var(--brand-soft), transparent 70%);"
+					aria-hidden="true"
+				></div>
+				<Totals subtotalCents={subtotal} ivaCents={iva} totalCents={total} />
+				<div class="mt-6">
+					{#if exportBusy}
+						<div class="progress-track mb-3" role="progressbar" aria-label="Generando PDF">
+							<i class="progress-bar"></i>
+						</div>
+					{/if}
+					<div class="relative">
+						<button
+							type="button"
+							class="btn btn-primary min-h-[52px] w-full text-[15px]"
+							onclick={handleExport}
+							disabled={!canExport || exportBusy}
+							aria-busy={exportBusy}
+							aria-describedby={exportHint ? exportHintId : undefined}
+						>
+							{#if exportBusy}
+								{@render spinner()}
+								Exportando…
+							{:else if exportSuccessText}
+								<svg class="check-draw size-[18px]" viewBox="0 0 16 16" aria-hidden="true">
+									<path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+								</svg>
+								Exportar PDF
+							{:else}
+								<svg class="size-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+									<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" />
+								</svg>
+								Exportar PDF
+							{/if}
+						</button>
+						<ConfettiBurst trigger={confettiTrigger} />
+					</div>
+					<!-- Reserved slot: idle hint / success / error swap in place without
+					     shifting the surrounding composition. -->
+					<div class="mt-1 min-h-5">
+						{#if exportSuccessText}
+							<!-- Confirms the download STARTED; never claims the OS saved it. -->
+							<p
+								class="flex items-start gap-1.5 text-sm font-medium text-accent"
+								role="status"
+								in:fly={{ y: 4, duration: motionDuration(200) }}
+							>
+								{@render checkIcon()}
+								<span>{exportSuccessText}</span>
+							</p>
+						{:else if exportPhase === 'error'}
+							<p
+								class="flex items-start gap-1.5 text-sm text-danger"
+								role="alert"
+								in:fly={{ y: 4, duration: motionDuration(200) }}
+							>
+								{@render alertIcon()}
+								<span>{EXPORT_ERROR_TEXT}</span>
+							</p>
+						{:else}
+							<p id={exportHintId} class="field-hint" aria-live="polite">{exportHint ?? ''}</p>
+						{/if}
+					</div>
+					<!-- Send by email (documented extension): one action, save-then-send.
+					     Always rendered next to the export action it complements; the
+					     hint slot explains the gate instead of hiding the control. -->
+					<div class="mt-5 flex flex-col gap-2 border-t border-line pt-5">
+						<label class="field-label" for="send-email">Enviar por mail a</label>
+						<div class="flex flex-col gap-2">
+							<input
+								id="send-email"
+								type="email"
+								value={sendTouched ? sendDraft : clientEmail}
+								oninput={(event) => {
+									sendTouched = true;
+									sendDraft = event.currentTarget.value;
+								}}
+								class="field-input"
+								class:field-input-error={sendEmailInvalid}
+								placeholder="destinatario@dominio.com"
+								aria-invalid={sendEmailInvalid}
+								disabled={sendPhase === 'busy'}
+							/>
+							<button
+								type="button"
+								class="btn btn-secondary w-full"
+								onclick={handleSend}
+								disabled={!canSend}
+								aria-busy={sendPhase === 'busy'}
+								aria-describedby={sendHint !== null ? 'send-hint' : undefined}
+							>
+								{#if sendPhase === 'busy'}
+									{@render spinner()}
+									{isDirty ? 'Guardando y enviando…' : 'Enviando…'}
+								{:else}
+									<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+										<path d="M3.5 6.5l8.5 6 8.5-6M4 5h16v14H4z" />
+									</svg>
+									{isDirty ? 'Guardar y enviar' : 'Enviar'}
+								{/if}
+							</button>
+						</div>
+						<!-- Reserved slot: hint / invalid / result swap in place. -->
+						<div class="min-h-5">
+							{#if sendEmailInvalid}
+								<p class="text-sm text-danger" role="alert">El mail del destinatario no es válido.</p>
+							{:else if sendText !== ''}
+								<p
+									class="flex items-start gap-1.5 text-sm {sendPhase === 'error' ? 'text-danger' : 'font-medium text-accent'}"
+									role={sendPhase === 'error' ? 'alert' : 'status'}
+									in:fly={{ y: 4, duration: motionDuration(200) }}
+								>
+									{#if sendPhase === 'error'}{@render alertIcon()}{:else}{@render checkIcon()}{/if}
+									<span>{sendText}</span>
+								</p>
+							{:else if sendHint !== null}
+								<p id="send-hint" class="field-hint" aria-live="polite">{sendHint}</p>
+							{/if}
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="card" aria-labelledby="saved-heading">
+				<h2 id="saved-heading" class="card-title">Guardar y cargar</h2>
+				<p class="hint-text mb-4">
+					Guardá el presupuesto actual con su número {presId ?? 'PRES-······'} o cargá uno guardado
+					para seguir trabajando con esos datos.
+				</p>
 				<button
 					type="button"
-					class="btn btn-primary w-full"
-					onclick={handleExport}
-					disabled={!canExport || exportBusy}
-					aria-busy={exportBusy}
-					aria-describedby={exportHint ? exportHintId : undefined}
+					class="btn btn-secondary w-full"
+					onclick={handleSave}
+					disabled={!canSave || saveBusy}
+					aria-busy={saveBusy}
+					aria-describedby={saveHint ? saveHintId : undefined}
 				>
-					{#if exportBusy}
-						<svg
-							class="size-4 animate-spin"
-							viewBox="0 0 24 24"
-							fill="none"
-							aria-hidden="true"
-						>
-							<circle
-								class="opacity-25"
-								cx="12"
-								cy="12"
-								r="10"
-								stroke="currentColor"
-								stroke-width="4"
-							/>
-							<path
-								class="opacity-90"
-								fill="currentColor"
-								d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
-							/>
-						</svg>
-						Exportando…
+					{#if saveBusy}
+						{@render spinner()}
+						Guardando…
 					{:else}
-						Exportar PDF
+						Guardar
 					{/if}
 				</button>
-				<!-- Reserved slot: idle hint / success / error swap in place without
-				     shifting the surrounding composition. -->
-				<div class="mt-1 min-h-5">
-					{#if exportSuccessText}
-						<!-- Confirms the download STARTED; never claims the OS saved it. -->
+				<!-- Reserved slot: save feedback swaps in place without shifting layout. -->
+				<div class="mt-1 min-h-5" bind:this={saveFeedbackEl}>
+					{#if savePhase === 'success'}
 						<p
-							class="flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400"
+							class="flex items-start gap-1.5 text-sm font-medium text-accent"
 							role="status"
 							in:fly={{ y: 4, duration: motionDuration(200) }}
 						>
-							<svg
-								class="size-4 shrink-0"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2.5"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								aria-hidden="true"
-							>
-								<path d="M20 6 9 17l-5-5" />
-							</svg>
-							<span>{exportSuccessText}</span>
+							{@render checkIcon()}
+							<span>{saveSuccessText}</span>
 						</p>
-					{:else if exportPhase === 'error'}
+					{:else if savePhase === 'error'}
 						<p
-							class="flex items-start gap-1.5 text-sm text-red-600 dark:text-red-400"
+							class="flex items-start gap-1.5 text-sm text-danger"
 							role="alert"
 							in:fly={{ y: 4, duration: motionDuration(200) }}
 						>
-							<svg
-								class="mt-0.5 size-4 shrink-0"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								aria-hidden="true"
-							>
-								<circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" />
-							</svg>
-							<span>{EXPORT_ERROR_TEXT}</span>
+							{@render alertIcon()}
+							<span>{saveErrorText}</span>
 						</p>
-					{:else}
-						<p id={exportHintId} class="field-hint" aria-live="polite">{exportHint ?? ''}</p>
-					{/if}
-				</div>
-			</div>
-			<!-- Send by email (documented extension): one action, save-then-send.
-			     Always rendered next to the export action it complements; the
-			     hint slot explains the gate instead of hiding the control. -->
-			<div class="mt-4 flex flex-col gap-2">
-				<label class="field-label" for="send-email">Enviar por mail a</label>
-				<div class="flex items-start gap-2">
-					<input
-						id="send-email"
-						type="email"
-						value={sendTouched ? sendDraft : clientEmail}
-						oninput={(event) => {
-							sendTouched = true;
-							sendDraft = event.currentTarget.value;
-						}}
-						class="field-input flex-1"
-						placeholder="destinatario@dominio.com"
-						aria-invalid={sendEmailInvalid}
-						disabled={sendPhase === 'busy'}
-					/>
-					<button
-						type="button"
-						class="btn btn-secondary shrink-0"
-						onclick={handleSend}
-						disabled={!canSend}
-						aria-busy={sendPhase === 'busy'}
-						aria-describedby={sendHint !== null ? 'send-hint' : undefined}
-					>
-						{#if sendPhase === 'busy'}
-							<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-								<path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
-							</svg>
-							{isDirty ? 'Guardando y enviando…' : 'Enviando…'}
-						{:else}
-							{isDirty ? 'Guardar y enviar' : 'Enviar'}
-						{/if}
-					</button>
-				</div>
-				<!-- Reserved slot: hint / invalid / result swap in place without
-				     shifting the composition below. -->
-				<div class="min-h-5">
-					{#if sendEmailInvalid}
-						<p class="text-sm text-red-600 dark:text-red-400" role="alert">El mail del destinatario no es válido.</p>
-					{:else if sendText !== ''}
+					{:else if saveNoticeText !== null}
 						<p
-							class="text-sm {sendPhase === 'error'
-								? 'text-red-600 dark:text-red-400'
-								: 'text-emerald-700 dark:text-emerald-400'}"
-							role={sendPhase === 'error' ? 'alert' : 'status'}
+							class="flex items-start gap-1.5 text-sm font-medium text-accent"
+							role="status"
+							in:fly={{ y: 4, duration: motionDuration(200) }}
 						>
-							{sendText}
+							<svg class="mt-0.5 size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
+							</svg>
+							<span>{saveNoticeText}</span>
 						</p>
-					{:else if sendHint !== null}
-						<p id="send-hint" class="field-hint" aria-live="polite">{sendHint}</p>
+					{:else if saveHint !== null}
+						<!-- Gate hint for the disabled button: neutral, never red. -->
+						<p id={saveHintId} class="field-hint" aria-live="polite">{saveHint}</p>
 					{/if}
 				</div>
-			</div>
-		</section>
-	</div>
-
-	<div class="mt-6 grid items-start gap-6 lg:grid-cols-2">
-		<section class="card min-w-0" aria-labelledby="parse-heading">
-			<h2 id="parse-heading" class="card-title">Analizar texto</h2>
-			<p class="hint-text mb-4">
-				Escribí lo que necesita el cliente y los ítems se agregan a la tabla mientras se analizan.
-			</p>
-			<ParsePanel
-				bind:this={parsePanel}
-				onitem={handleParsedItem}
-				onclient={handleParsedClient}
-				onemail={handleParsedEmail}
-				onaddress={handleParsedAddress}
-			/>
-		</section>
-
-		<section class="card min-w-0" aria-labelledby="saved-heading">
-			<h2 id="saved-heading" class="card-title">Guardar y cargar</h2>
-			<p class="hint-text mb-4">
-				Guardá el presupuesto actual con su número {presId ?? 'PRES-······'} o cargá uno guardado
-				para seguir trabajando con esos datos.
-			</p>
-			<button
-				type="button"
-				class="btn btn-primary w-full"
-				onclick={handleSave}
-				disabled={!canSave || saveBusy}
-				aria-busy={saveBusy}
-				aria-describedby={saveHint ? saveHintId : undefined}
-			>
-				{#if saveBusy}
-					<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-						<circle
-							class="opacity-25"
-							cx="12"
-							cy="12"
-							r="10"
-							stroke="currentColor"
-							stroke-width="4"
-						/>
-						<path
-							class="opacity-90"
-							fill="currentColor"
-							d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
-						/>
-					</svg>
-					Guardando…
-				{:else}
-					Guardar
-				{/if}
-			</button>
-			<!-- Reserved slot: save feedback swaps in place without shifting layout.
-			     Success/notice carry icons so the outcome reads at a glance even
-			     when the card is only half-scrolled into view (UX polish 2). -->
-			<div class="mt-1 min-h-5" bind:this={saveFeedbackEl}>
-				{#if savePhase === 'success'}
-					<p
-						class="flex items-start gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400"
-						role="status"
-						in:fly={{ y: 4, duration: motionDuration(200) }}
-					>
-						<svg
-							class="mt-0.5 size-4 shrink-0"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2.5"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<path d="M20 6 9 17l-5-5" />
-						</svg>
-						<span>{saveSuccessText}</span>
-					</p>
-				{:else if savePhase === 'error'}
-					<p
-						class="flex items-start gap-1.5 text-sm text-red-600 dark:text-red-400"
-						role="alert"
-						in:fly={{ y: 4, duration: motionDuration(200) }}
-					>
-						<!-- Same alert-icon pattern the Export error uses. -->
-						<svg
-							class="mt-0.5 size-4 shrink-0"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" />
-						</svg>
-						<span>{saveErrorText}</span>
-					</p>
-				{:else if saveNoticeText !== null}
-					<p
-						class="flex items-start gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400"
-						role="status"
-						in:fly={{ y: 4, duration: motionDuration(200) }}
-					>
-						<svg
-							class="mt-0.5 size-4 shrink-0"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
-						</svg>
-						<span>{saveNoticeText}</span>
-					</p>
-				{:else if saveHint !== null}
-					<!-- Gate hint for the disabled button: neutral, never red. -->
-					<p id={saveHintId} class="field-hint" aria-live="polite">{saveHint}</p>
-				{/if}
-			</div>
-			<div class="mt-6">
-				<BudgetPicker
-					bind:this={picker}
-					onload={handleLoadBudget}
-					ondelete={handleBudgetDeleted}
-				/>
-			</div>
-		</section>
+				<div class="mt-6">
+					<BudgetPicker bind:this={picker} onload={handleLoadBudget} ondelete={handleBudgetDeleted} />
+				</div>
+			</section>
+		</aside>
 	</div>
 </main>
+
+<Toast text={toastText} seq={toastSeq} />
