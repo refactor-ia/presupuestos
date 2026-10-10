@@ -959,7 +959,7 @@
 					     hint slot explains the gate instead of hiding the control. -->
 					<div class="mt-5 flex flex-col gap-2 border-t border-line pt-5">
 						<label class="field-label" for="send-email">Enviar por mail a</label>
-						<div class="flex items-start gap-2">
+						<div class="flex flex-col gap-2">
 							<input
 								id="send-email"
 								type="email"
@@ -968,7 +968,7 @@
 									sendTouched = true;
 									sendDraft = event.currentTarget.value;
 								}}
-								class="field-input min-w-0 flex-1"
+								class="field-input"
 								class:field-input-error={sendEmailInvalid}
 								placeholder="destinatario@dominio.com"
 								aria-invalid={sendEmailInvalid}
@@ -976,7 +976,7 @@
 							/>
 							<button
 								type="button"
-								class="btn btn-secondary shrink-0"
+								class="btn btn-secondary w-full"
 								onclick={handleSend}
 								disabled={!canSend}
 								aria-busy={sendPhase === 'busy'}
