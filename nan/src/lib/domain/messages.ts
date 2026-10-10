@@ -21,7 +21,12 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
 	QUANTITY_INVALID: 'Entero entre 1 y 9999.',
 	PRICE_INVALID: 'Desde 0,01; punto o coma; sin miles.',
 	PRICE_BELOW_MINIMUM: 'Debe ser mayor o igual a 0,01.',
-	ITEM_LIMIT_REACHED: 'Alcanzaste el límite de 100 ítems.'
+	ITEM_LIMIT_REACHED: 'Alcanzaste el límite de 100 ítems.',
+	MAIL_RECIPIENT_INVALID: 'El mail del destinatario no es válido.',
+	MAIL_NOT_FOUND: 'El presupuesto no está guardado: guardalo antes de enviarlo por mail.',
+	MAIL_THROTTLED: 'Ya enviamos un mail a esta dirección hace un momento. Esperá un minuto para reenviar.',
+	MAIL_UNAVAILABLE: 'El servicio de mail no respondió. Probá de nuevo en un rato.',
+	MAIL_NOT_CONFIGURED: 'El envío de mail no está configurado en el servidor.'
 };
 
 /** Resolve a validation outcome for the UI. A null code stays null (no error to show). */

@@ -112,6 +112,13 @@ export class SenderLimit {
 		return true;
 	}
 
+	/** Drops the pending window for a recipient: used when the send FAILED
+	 *  upstream, so a legitimate retry is not throttled by a mail that never
+	 *  went out. Unknown keys are a no-op. */
+	release(recipient: string): void {
+		this.nextAllowed.delete(recipient.trim().toLowerCase());
+	}
+
 	size(): number {
 		return this.nextAllowed.size;
 	}

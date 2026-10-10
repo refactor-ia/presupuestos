@@ -14,7 +14,6 @@ import type { RequestHandler } from './$types';
 import { buildPostmarkBody, isAcceptedRecipient, SenderLimit } from '$lib/server/mail';
 import { getBudget } from '$lib/server/budgets';
 import {
-	GENERIC_ERROR_CODE,
 	badRequestResponse,
 	errorResponse,
 	invalidInputResponse,
@@ -42,21 +41,21 @@ export const POST: RequestHandler = async ({ request, params }) => {
 	const source = typeof body.body === 'object' && body.body !== null ? body.body : {};
 	const recipient = (source as Record<string, unknown>).email;
 	if (!isAcceptedRecipient(recipient)) {
-		return invalidInputResponse(GENERIC_ERROR_CODE);
+		return invalidInputResponse('MAIL_RECIPIENT_INVALID');
 	}
 
 	const budget = getBudget(id);
 	if (budget === null) {
-		return notFoundResponse();
+		return errorResponse('MAIL_NOT_FOUND', 404);
 	}
 
 	const token = env.POSTMARK_TOKEN ?? process.env.POSTMARK_TOKEN;
 	const from = env.POSTMARK_FROM ?? process.env.POSTMARK_FROM;
 	if (!token || !from) {
-		return errorResponse(GENERIC_ERROR_CODE, 503);
+		return errorResponse('MAIL_NOT_CONFIGURED', 503);
 	}
 	if (!sendLimit.tryAcquire(recipient, Date.now())) {
-		return errorResponse(GENERIC_ERROR_CODE, 429);
+		return errorResponse('MAIL_THROTTLED', 429);
 	}
 
 	let upstream: Response;
@@ -71,10 +70,14 @@ export const POST: RequestHandler = async ({ request, params }) => {
 			body: buildPostmarkBody(from, { ...budget, email: recipient })
 		});
 	} catch {
-		return errorResponse(GENERIC_ERROR_CODE, 502);
+		// The send never left the building: free the throttle window so a
+		// legitimate retry is not punished for a mail that never went out.
+		sendLimit.release(recipient);
+		return errorResponse('MAIL_UNAVAILABLE', 502);
 	}
 	if (!upstream.ok) {
-		return errorResponse(GENERIC_ERROR_CODE, 502);
+		sendLimit.release(recipient);
+		return errorResponse('MAIL_UNAVAILABLE', 502);
 	}
 	return Response.json({ ok: true });
 };

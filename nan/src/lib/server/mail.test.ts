@@ -113,6 +113,21 @@ describe('SenderLimit', () => {
 		expect(limit.tryAcquire('a@b.com', 1000 + MIN_SEND_INTERVAL_MS - 1)).toBe(false);
 	});
 
+	it('releases the window so a failed send can be retried immediately', () => {
+		const limit = new SenderLimit();
+		expect(limit.tryAcquire('a@b.com', 1000)).toBe(true);
+		limit.release('a@b.com');
+		expect(limit.tryAcquire('a@b.com', 1100)).toBe(true);
+	});
+
+	it('release is a no-op for an unknown or case-different recipient', () => {
+		const limit = new SenderLimit();
+		limit.release('never@sent.com'); // must not throw
+		limit.tryAcquire('a@b.com', 1000);
+		limit.release('A@B.COM'); // normalizes to the same key
+		expect(limit.tryAcquire('a@b.com', 1100)).toBe(true);
+	});
+
 	it('evicts stale recipients so the map cannot grow unbounded', () => {
 		const limit = new SenderLimit();
 		limit.tryAcquire('old@x.com', 0);
