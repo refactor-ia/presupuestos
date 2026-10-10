@@ -4,6 +4,73 @@
    the toggle flips the class on <html>. No persistence by design. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* -------------------------------------------------------------------------
+ * Design tokens — single source. Palette, radii and type scale come from
+ * refactoria.dev (brand-500, dark-700/800/900, light-100/200/300, radius
+ * main/small/round, letter-spacing tight). Muted text is the site's 64–66%
+ * text mix flattened to an opaque hex so contrast stays auditable
+ * (design/contrast.test.ts). Danger is derived: the site defines no red.
+ * Fonts are local stacks only: the constitution forbids remote fonts.
+ * ---------------------------------------------------------------------- */
+:root {
+	--brand: #7127ff;
+	--brand-fg: #ffffff;
+	--bg: #f2effa;
+	--surface: #ffffff;
+	--surface-2: #ebebeb;
+	--fg: #0b0714;
+	--fg-2: #5e5b64;
+	--line: rgb(11 7 20 / 0.16);
+	--accent: #5a12e0;
+	--danger: #c4183c;
+	--brand-soft: rgb(113 39 255 / 0.1);
+	--danger-soft: rgb(196 24 60 / 0.12);
+	--glow: rgb(113 39 255 / 0.35);
+	--toast-bg: #0b0714;
+	--toast-fg: #ffffff;
+
+	--radius-main: 1rem;
+	--radius-small: 0.5rem;
+	--radius-round: 100vw;
+	--tracking-tight: -0.03em;
+	--ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+	--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+	--font-sans-stack: Inter, 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-mono-stack: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+html.dark {
+	--bg: #0b0714;
+	--surface: #17102a;
+	--surface-2: #2c2144;
+	--fg: #ffffff;
+	--fg-2: #aba9b2;
+	--line: rgb(255 255 255 / 0.14);
+	--accent: #b99aff;
+	--danger: #ff7a93;
+	--brand-soft: rgb(113 39 255 / 0.22);
+	--danger-soft: rgb(255 122 147 / 0.14);
+	--glow: rgb(113 39 255 / 0.55);
+	--toast-bg: #ffffff;
+	--toast-fg: #0b0714;
+}
+
+@theme inline {
+	--color-bg: var(--bg);
+	--color-surface: var(--surface);
+	--color-surface-2: var(--surface-2);
+	--color-fg: var(--fg);
+	--color-fg-2: var(--fg-2);
+	--color-line: var(--line);
+	--color-brand: var(--brand);
+	--color-brand-fg: var(--brand-fg);
+	--color-brand-soft: var(--brand-soft);
+	--color-accent: var(--accent);
+	--color-danger: var(--danger);
+	--font-sans: var(--font-sans-stack);
+	--font-mono: var(--font-mono-stack);
+}
+
 @layer base {
 	html {
 		color-scheme: light;
@@ -14,123 +81,251 @@
 	}
 
 	body {
-		@apply bg-slate-100 text-slate-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+		@apply bg-bg font-sans text-fg antialiased;
+	}
+
+	::selection {
+		background: var(--brand);
+		color: var(--brand-fg);
 	}
 }
 
-/* Design tokens: the single source for every repeated visual value. */
 @layer components {
 	.card {
-		@apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-colors dark:border-zinc-800 dark:bg-zinc-900 sm:p-6;
+		@apply rounded-[var(--radius-main)] border border-line bg-surface p-5 sm:p-6;
+		transition:
+			box-shadow 300ms var(--ease-out-soft),
+			border-color 200ms ease;
+	}
+	.card:hover {
+		box-shadow: 0 12px 40px -18px var(--glow);
 	}
 
 	.card-title {
-		@apply mb-4 text-xs font-semibold tracking-widest text-slate-500 uppercase dark:text-zinc-400;
+		@apply mb-4 text-xs font-medium tracking-[0.08em] text-fg-2 uppercase;
 	}
 
 	.field-label {
-		@apply mb-1 block text-sm font-medium text-slate-700 dark:text-zinc-300;
+		@apply mb-1.5 block text-sm font-medium text-fg;
 	}
 
 	.field-input {
-		@apply h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-base text-slate-900 outline-none transition-colors placeholder:text-slate-500 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:focus:border-emerald-400 dark:focus:ring-emerald-400/25;
+		@apply h-11 w-full rounded-[var(--radius-small)] border border-line bg-bg px-3.5 text-base text-fg outline-none placeholder:text-fg-2;
+		transition:
+			border-color 200ms ease,
+			box-shadow 250ms var(--ease-out-soft);
+	}
+	.field-input:hover {
+		border-color: color-mix(in lab, var(--brand) 50%, var(--line));
+	}
+	.field-input:focus {
+		border-color: var(--brand);
+		box-shadow: 0 0 0 4px var(--brand-soft);
 	}
 
 	/* Error styling for a field: replaces the default border color, never adds a second ring. */
-	.field-input-error {
-		@apply border-red-500 focus:border-red-500 focus:ring-red-500/30 dark:border-red-400 dark:focus:border-red-400 dark:focus:ring-red-400/25;
+	.field-input-error,
+	.field-input-error:hover,
+	.field-input-error:focus {
+		border-color: var(--danger);
+	}
+	.field-input-error:focus {
+		box-shadow: 0 0 0 4px var(--danger-soft);
 	}
 
 	/* Reserved error slot: always present (min height = one line) so appearing or
 	   disappearing text never shifts neighboring layout (delta ≤ 2px). leading-5
-	   pins the line box to exactly the reserved 20px: the rendered single-line
-	   message occupies the same box as the empty slot (DEF-01). */
+	   pins the line box to exactly the reserved 20px (DEF-01). */
 	.field-error {
-		@apply mt-1 min-h-5 text-sm leading-5 text-red-600 dark:text-red-400;
+		@apply mt-1 min-h-5 text-sm leading-5 text-danger;
 	}
 
-	/* Reserved hint slot (UX polish): neutral/success feedback — parse status,
-	   export/save gate hints. Same reserved-box discipline as .field-error;
-	   red stays reserved for real errors. Emerald tone reads as "OK" in both
-	   themes (emerald-700 on light, emerald-400 on dark: ≥4.5:1). */
+	/* Reserved hint slot: neutral/success feedback. Same reserved-box
+	   discipline as .field-error; red stays reserved for real errors. */
 	.field-hint {
-		@apply mt-1 min-h-5 text-sm leading-5 text-emerald-700 dark:text-emerald-400;
+		@apply mt-1 min-h-5 text-sm leading-5 text-accent;
+	}
+
+	.num {
+		@apply font-mono tabular-nums;
 	}
 
 	.btn {
-		@apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 dark:focus-visible:ring-emerald-400 dark:focus-visible:ring-offset-zinc-950;
+		@apply relative inline-flex min-h-11 items-center justify-center gap-2 overflow-hidden rounded-[var(--radius-round)] border border-transparent px-[18px] text-sm font-medium outline-none select-none;
+		transition:
+			transform 180ms var(--ease-spring),
+			background-color 200ms ease,
+			color 200ms ease,
+			border-color 200ms ease,
+			box-shadow 250ms var(--ease-out-soft),
+			opacity 200ms ease;
+	}
+	.btn:active:not(:disabled) {
+		transform: scale(0.96);
+	}
+	.btn:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: 3px;
+	}
+	.btn:disabled {
+		@apply cursor-not-allowed opacity-40;
 	}
 
+	/* Brand label is white: #fff on #7127ff is 6.6:1 (INV-02). */
 	.btn-primary {
-		/* Dark label on emerald (not white): white on emerald-600 is 3.77:1, below
-		   the 4.5:1 a 14px semibold label needs (INV-02). Matches the dark theme. */
-		@apply bg-emerald-600 text-zinc-950 hover:bg-emerald-500 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 dark:bg-emerald-500 dark:text-zinc-950 dark:hover:bg-emerald-400;
+		@apply bg-brand text-brand-fg;
+		box-shadow: 0 8px 24px -10px var(--glow);
+	}
+	.btn-primary:hover:not(:disabled) {
+		transform: translateY(-1px);
+		box-shadow: 0 14px 32px -10px var(--glow);
+	}
+	/* Shine sweep on hover: a decorative highlight crossing the label. */
+	.btn-primary::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 0.28) 50%, transparent 70%);
+		transform: translateX(-120%);
+		transition: transform 700ms var(--ease-out-soft);
+		pointer-events: none;
+	}
+	.btn-primary:hover:not(:disabled)::after {
+		transform: translateX(120%);
+	}
+	.btn-primary:disabled {
+		box-shadow: none;
 	}
 
 	.btn-secondary {
-		@apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800;
+		@apply border-line bg-transparent text-fg;
+	}
+	.btn-secondary:hover:not(:disabled) {
+		@apply border-fg bg-fg text-bg;
 	}
 
-	/* Row action: 44×44 touch target, glyph biased to the FIRST text line of its
-	   row via .btn-icon-row (the cell is not the reference, the line is). */
+	.btn-icon {
+		@apply inline-flex size-11 shrink-0 items-center justify-center rounded-[var(--radius-round)] border border-line bg-transparent text-fg outline-none;
+		transition:
+			transform 300ms var(--ease-spring),
+			background-color 200ms ease,
+			border-color 200ms ease;
+	}
+	.btn-icon:hover:not(:disabled) {
+		@apply border-brand bg-brand-soft;
+	}
+	.btn-icon:active:not(:disabled) {
+		transform: scale(0.9);
+	}
+	.btn-icon:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: 3px;
+	}
+
+	/* Row action: 44×44 touch target. */
 	.btn-icon-ghost {
-		@apply inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors outline-none hover:bg-red-50 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-emerald-600 active:scale-95 dark:text-zinc-500 dark:hover:bg-red-950/40 dark:hover:text-red-400;
+		@apply inline-flex size-11 items-center justify-center rounded-[var(--radius-small)] text-fg-2 outline-none;
+		transition:
+			background-color 200ms ease,
+			color 200ms ease;
+	}
+	.btn-icon-ghost svg {
+		transition: transform 250ms var(--ease-spring);
+	}
+	.btn-icon-ghost:hover {
+		background: var(--danger-soft);
+		color: var(--danger);
+	}
+	.btn-icon-ghost:hover svg {
+		transform: rotate(-12deg);
+	}
+	.btn-icon-ghost:active svg {
+		transform: scale(0.85);
+	}
+	.btn-icon-ghost:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: 1px;
 	}
 
-	/* Delete-button variant used inside table rows: keeps the 44×44 hit box but
-	   pads the bottom so the glyph centers on the row's first text line
-	   (text-sm line center = 18px from row top: 4px cell padding + 14px). */
+	/* Delete button inside table rows: keeps the 44×44 hit box, glyph biased
+	   to the row's first text line. */
 	.btn-icon-row {
 		@apply pb-4;
 	}
 
+	.chip {
+		@apply inline-flex h-9 items-center gap-2 rounded-[var(--radius-round)] border border-transparent bg-brand-soft px-3.5 font-mono text-[13px] font-medium text-fg outline-none;
+		transition:
+			border-color 200ms ease,
+			transform 200ms var(--ease-spring);
+	}
+	.chip:hover {
+		@apply border-brand;
+	}
+	.chip:active {
+		transform: scale(0.95);
+	}
+	.chip:focus-visible {
+		outline: 2px solid var(--brand);
+		outline-offset: 3px;
+	}
+
 	.table-num {
-		@apply text-right whitespace-nowrap tabular-nums;
+		@apply text-right font-mono whitespace-nowrap tabular-nums;
 	}
 
 	.hint-text {
-		@apply text-sm text-slate-500 dark:text-zinc-400;
+		@apply text-sm text-fg-2;
+	}
+
+	.eyebrow {
+		@apply text-xs font-medium tracking-[0.08em] text-fg-2 uppercase;
 	}
 }
 
 /* -------------------------------------------------------------------------
- * Interaction feedback layer (M-04 part A) — decorative motion.
+ * Interaction feedback layer — decorative motion.
  * CSS animations/transitions here are disabled for reduced motion by the
- * media query below; Svelte transitions collapse via $lib/motion.
+ * media query at the end; Svelte transitions collapse via $lib/motion.
  * ---------------------------------------------------------------------- */
 
 /* Theme switch cross-fade: ThemeToggle adds .theme-transition to <html> for a
    single paint window so every color token eases instead of hard-cutting.
-   The root element itself is included: `html.theme-transition *` alone never
-   matches <html>, so the root's own computed transition read 0s and any
-   root-level color change hard-cut while descendants faded (DEF-02). */
+   The root itself is included so root-level color changes fade too (DEF-02). */
 @media (prefers-reduced-motion: no-preference) {
 	html.theme-transition,
 	html.theme-transition *,
 	html.theme-transition *::before,
 	html.theme-transition *::after {
-		transition-property: background-color, border-color, color, fill, stroke !important;
-		transition-duration: 260ms !important;
-		transition-timing-function: ease !important;
+		transition-property: background-color, border-color, color, fill, stroke, box-shadow !important;
+		transition-duration: 420ms !important;
+		transition-timing-function: var(--ease-out-soft) !important;
 		transition-delay: 0s !important;
 	}
 }
 
-/* New-row confirmation: a brief emerald wash that fades while the row settles. */
+.theme-icon {
+	transition: transform 600ms var(--ease-spring);
+}
+.theme-icon-light {
+	transform: rotate(-360deg);
+}
+
+/* New-row confirmation: a brand wash plus an inset marker that fade together. */
 @keyframes row-enter-flash {
 	from {
-		background-color: rgba(16, 185, 129, 0.24); /* emerald-500 wash */
+		background-color: var(--brand-soft);
+		box-shadow: inset 3px 0 0 var(--brand);
 	}
 	to {
 		background-color: transparent;
+		box-shadow: inset 0 0 0 transparent;
 	}
 }
 .row-enter {
-	animation: row-enter-flash 1s ease-out;
+	animation: row-enter-flash 1.2s var(--ease-out-soft);
 }
 
-/* Changed-value emphasis: values blink in; the Total also flashes to the
-   accent color and pops — it is the interface's protagonist (design.md). */
 @keyframes value-flash {
 	from {
 		opacity: 0.2;
@@ -143,36 +338,47 @@
 	display: inline-block;
 	animation: value-flash 600ms ease-out;
 }
-@keyframes total-accent-flash {
-	from {
-		color: var(--color-emerald-500, #10b981);
-	}
-	to {
-		color: currentColor;
-	}
-}
+
+/* The Total pops and tints toward the brand when it changes. */
 @keyframes total-pop {
 	0% {
-		transform: scale(1.1);
+		transform: scale(1);
 	}
-	60% {
-		transform: scale(0.99);
+	40% {
+		transform: scale(1.06);
+		color: var(--accent);
 	}
 	100% {
 		transform: scale(1);
 	}
 }
-.total-flash {
-	animation:
-		value-flash 600ms ease-out,
-		total-accent-flash 900ms ease-out,
-		total-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1);
+.total-pop {
+	display: inline-block;
 	transform-origin: 100% 60%;
+	animation: total-pop 500ms var(--ease-spring);
 }
 
-/* PRES id materialization (F-02): the hydration swap from the PRES-······
-   placeholder to the real id reads as intentional. Plays once on the first
-   real render ({#key} remount); reduced motion collapses it to a hard show. */
+/* Invalid submit: the offending field shakes once (re-keyed per attempt). */
+@keyframes shake {
+	0%,
+	100% {
+		transform: none;
+	}
+	25% {
+		transform: translateX(-5px);
+	}
+	50% {
+		transform: translateX(4px);
+	}
+	75% {
+		transform: translateX(-2px);
+	}
+}
+.shake {
+	animation: shake 360ms var(--ease-out-soft);
+}
+
+/* PRES id materialization (F-02): the placeholder→real id swap reads as intentional. */
 @keyframes id-materialize {
 	from {
 		opacity: 0;
@@ -185,7 +391,143 @@
 }
 .materialize {
 	transform-origin: 0% 60%;
-	animation: id-materialize 240ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+	animation: id-materialize 240ms var(--ease-spring) both;
+}
+
+/* Hand-drawn check: the stroke draws itself in. */
+@keyframes check-draw {
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+.check-draw path {
+	stroke-dasharray: 24;
+	stroke-dashoffset: 24;
+	animation: check-draw 450ms 100ms var(--ease-out-soft) forwards;
+}
+
+/* Parse loading skeleton. */
+@keyframes shimmer {
+	to {
+		background-position: -200% 0;
+	}
+}
+.skeleton {
+	@apply h-11 rounded-[var(--radius-small)];
+	background: linear-gradient(90deg, var(--surface-2) 0%, var(--brand-soft) 50%, var(--surface-2) 100%);
+	background-size: 200% 100%;
+	animation: shimmer 1.1s linear infinite;
+}
+
+/* Dictation: pulsing rings around the mic and a live level meter. */
+@keyframes mic-ring {
+	0% {
+		transform: scale(1);
+		opacity: 0.7;
+	}
+	100% {
+		transform: scale(1.9);
+		opacity: 0;
+	}
+}
+.mic-ring {
+	position: absolute;
+	inset: 0;
+	border-radius: var(--radius-round);
+	border: 2px solid var(--brand);
+	opacity: 0;
+	pointer-events: none;
+	animation: mic-ring 1.6s var(--ease-out-soft) infinite;
+}
+.mic-ring-delayed {
+	animation-delay: 0.5s;
+}
+@keyframes level-bar {
+	0%,
+	100% {
+		transform: scaleY(0.3);
+	}
+	50% {
+		transform: scaleY(1);
+	}
+}
+.level-bars > span {
+	display: inline-block;
+	width: 3px;
+	height: 14px;
+	margin: 0 1px;
+	border-radius: 2px;
+	background: var(--brand);
+	animation: level-bar 0.9s ease-in-out infinite;
+}
+.level-bars > span:nth-child(2) {
+	animation-delay: 0.12s;
+}
+.level-bars > span:nth-child(3) {
+	animation-delay: 0.24s;
+}
+.level-bars > span:nth-child(4) {
+	animation-delay: 0.36s;
+}
+.level-bars > span:nth-child(5) {
+	animation-delay: 0.48s;
+}
+
+/* Export reward: a confetti burst in the brand palette, success only. */
+@keyframes confetti {
+	0% {
+		opacity: 1;
+		transform: translate(0, 0) rotate(0) scale(1);
+	}
+	100% {
+		opacity: 0;
+		transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0.6);
+	}
+}
+.confetti-piece {
+	position: absolute;
+	left: -4px;
+	top: -4px;
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	opacity: 0;
+	animation: confetti 1s var(--ease-out-soft) forwards;
+}
+
+/* Export progress bar. */
+@keyframes progress-indeterminate {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(250%);
+	}
+}
+.progress-track {
+	@apply h-1.5 overflow-hidden rounded-[var(--radius-round)] bg-surface-2;
+}
+.progress-bar {
+	display: block;
+	width: 40%;
+	height: 100%;
+	border-radius: var(--radius-round);
+	background: linear-gradient(90deg, var(--brand), #a57bff);
+	box-shadow: 0 0 12px var(--glow);
+	animation: progress-indeterminate 1.1s var(--ease-out-soft) infinite;
+}
+
+.float-soft {
+	animation: float-soft 3.5s ease-in-out infinite;
+}
+@keyframes float-soft {
+	0%,
+	100% {
+		transform: translateY(0);
+	}
+	50% {
+		transform: translateY(-6px);
+	}
 }
 
 /* Respect the system reduced-motion preference. */
@@ -195,5 +537,6 @@
 	::after {
 		transition-duration: 0.01ms !important;
 		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
 	}
 }

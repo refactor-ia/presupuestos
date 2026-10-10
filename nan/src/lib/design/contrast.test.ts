@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 // INV-02 contrast audit — pure math (WCAG 2.x relative luminance + ratio).
 // Catalog of every text/background pair the UI actually renders, in BOTH
-// themes, using the Tailwind v4 palette values referenced by app.css and the
-// components. If a color token changes in app.css, mirror it here: a failing
-// pair fails the suite. Focus indicators and icons are non-text UI and are
+// themes, using the design tokens defined in app.css. If a token changes
+// there, mirror it here: a failing pair fails the suite. Focus indicators and icons are non-text UI and are
 // held to the 3:1 threshold; the Total (3xl bold) qualifies as large text.
 
 type Hex = string;
@@ -31,30 +30,33 @@ function contrastRatio(fg: Hex, bg: Hex): number {
 	return (hi + 0.05) / (lo + 0.05);
 }
 
-// Tailwind v4 palette values actually referenced in app.css / components.
-const palette = {
-	white: '#ffffff',
-	'slate-100': '#f1f5f9',
-	'slate-500': '#64748b',
-	'slate-600': '#475569',
-	'slate-700': '#334155',
-	'slate-800': '#1e293b',
-	'slate-900': '#0f172a',
-	'zinc-50': '#fafafa',
-	'zinc-100': '#f4f4f5',
-	'zinc-200': '#e4e4e7',
-	'zinc-300': '#d4d4d8',
-	'zinc-400': '#a1a1aa',
-	'zinc-500': '#71717a',
-	'zinc-900': '#18181b',
-	'zinc-950': '#09090b',
-	'red-400': '#f87171',
-	'red-500': '#ef4444',
-	'red-600': '#dc2626',
-	'emerald-400': '#34d399',
-	'emerald-500': '#10b981',
-	'emerald-600': '#059669',
-	'emerald-700': '#047857'
+// Opaque token values from app.css (refactoria.dev palette). Translucent
+// borders/halos are decorative and not audited; muted text is stored as an
+// opaque hex precisely so it can be audited here.
+const light = {
+	brand: '#7127ff',
+	brandFg: '#ffffff',
+	bg: '#f2effa',
+	surface: '#ffffff',
+	fg: '#0b0714',
+	fg2: '#5e5b64',
+	accent: '#5a12e0',
+	danger: '#c4183c',
+	toastBg: '#0b0714',
+	toastFg: '#ffffff'
+} as const;
+
+const dark = {
+	brand: '#7127ff',
+	brandFg: '#ffffff',
+	bg: '#0b0714',
+	surface: '#17102a',
+	fg: '#ffffff',
+	fg2: '#aba9b2',
+	accent: '#b99aff',
+	danger: '#ff7a93',
+	toastBg: '#ffffff',
+	toastFg: '#0b0714'
 } as const;
 
 interface Pair {
@@ -66,47 +68,26 @@ interface Pair {
 	min: 4.5 | 3;
 }
 
-// Light theme: page bg slate-100, cards/inputs white.
-const lightPairs: Pair[] = [
-	{ where: 'body text on page background', fg: palette['slate-900'], bg: palette['slate-100'], min: 4.5 },
-	{ where: 'card/table-header text on white card', fg: palette['slate-900'], bg: palette.white, min: 4.5 },
-	{ where: 'table description + subtotal on white card', fg: palette['slate-800'], bg: palette.white, min: 4.5 },
-	{ where: 'table quantity/price on white card', fg: palette['slate-600'], bg: palette.white, min: 4.5 },
-	{ where: 'field labels + secondary button on white', fg: palette['slate-700'], bg: palette.white, min: 4.5 },
-	{ where: 'card titles, hints, (opcional) note and placeholder on white', fg: palette['slate-500'], bg: palette.white, min: 4.5 },
-	{ where: 'header eyebrow + issue date on page background', fg: palette['slate-600'], bg: palette['slate-100'], min: 4.5 },
-	{ where: 'field error text on white card', fg: palette['red-600'], bg: palette.white, min: 4.5 },
-	{ where: 'export success text on white card', fg: palette['emerald-700'], bg: palette.white, min: 4.5 },
-	{ where: 'Total value (3xl bold, large text) on white card', fg: palette['emerald-700'], bg: palette.white, min: 3 },
-	{ where: 'primary button label on emerald-600', fg: palette['zinc-950'], bg: palette['emerald-600'], min: 4.5 },
-	{ where: 'row delete icon on white card (non-text)', fg: palette['slate-500'], bg: palette.white, min: 3 },
-	{ where: 'input focus border on white input (non-text)', fg: palette['emerald-600'], bg: palette.white, min: 3 },
-	{ where: 'error focus border on white input (non-text)', fg: palette['red-500'], bg: palette.white, min: 3 },
-	{ where: 'button focus ring on page background (non-text)', fg: palette['emerald-600'], bg: palette['slate-100'], min: 3 },
-	{ where: 'required marker (decorative, aria-hidden) on white', fg: palette['red-500'], bg: palette.white, min: 3 }
-];
+function pairsFor(t: typeof light | typeof dark): Pair[] {
+	return [
+		{ where: 'body text on page background', fg: t.fg, bg: t.bg, min: 4.5 },
+		{ where: 'card text, table values and Total on card', fg: t.fg, bg: t.surface, min: 4.5 },
+		{ where: 'muted text (eyebrows, hints, qty/price, placeholder) on card', fg: t.fg2, bg: t.surface, min: 4.5 },
+		{ where: 'muted text and placeholder on page/input background', fg: t.fg2, bg: t.bg, min: 4.5 },
+		{ where: 'success/hint text on card', fg: t.accent, bg: t.surface, min: 4.5 },
+		{ where: 'field error text on card', fg: t.danger, bg: t.surface, min: 4.5 },
+		{ where: 'field error text on add-item panel (page background)', fg: t.danger, bg: t.bg, min: 4.5 },
+		{ where: 'primary button label on brand', fg: t.brandFg, bg: t.brand, min: 4.5 },
+		{ where: 'toast text', fg: t.toastFg, bg: t.toastBg, min: 4.5 },
+		{ where: 'focus outline (brand) on page background (non-text)', fg: t.brand, bg: t.bg, min: 3 },
+		{ where: 'focus outline (brand) on card (non-text)', fg: t.brand, bg: t.surface, min: 3 },
+		{ where: 'error border on input (non-text)', fg: t.danger, bg: t.bg, min: 3 },
+		{ where: 'row delete icon on card (non-text)', fg: t.fg2, bg: t.surface, min: 3 }
+	];
+}
 
-// Dark theme: page bg zinc-950, cards zinc-900, inputs zinc-950.
-const darkPairs: Pair[] = [
-	{ where: 'body text on page background', fg: palette['zinc-100'], bg: palette['zinc-950'], min: 4.5 },
-	{ where: 'card/table-header text on dark card', fg: palette['zinc-100'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'table description, subtotal and secondary button on dark card', fg: palette['zinc-200'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'table quantity/price on dark card', fg: palette['zinc-400'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'field labels on dark card', fg: palette['zinc-300'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'card titles, hints and (opcional) note on dark card', fg: palette['zinc-400'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'Total label on dark card', fg: palette['zinc-50'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'header eyebrow + issue date on page background', fg: palette['zinc-400'], bg: palette['zinc-950'], min: 4.5 },
-	{ where: 'input placeholder on dark input', fg: palette['zinc-400'], bg: palette['zinc-950'], min: 4.5 },
-	{ where: 'field error text on dark card', fg: palette['red-400'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'export success text on dark card', fg: palette['emerald-400'], bg: palette['zinc-900'], min: 4.5 },
-	{ where: 'Total value (3xl bold, large text) on dark card', fg: palette['emerald-400'], bg: palette['zinc-900'], min: 3 },
-	{ where: 'primary button label on emerald-500', fg: palette['zinc-950'], bg: palette['emerald-500'], min: 4.5 },
-	{ where: 'row delete icon on dark card (non-text)', fg: palette['zinc-500'], bg: palette['zinc-900'], min: 3 },
-	{ where: 'input focus border on dark input (non-text)', fg: palette['emerald-400'], bg: palette['zinc-950'], min: 3 },
-	{ where: 'error focus border on dark input (non-text)', fg: palette['red-400'], bg: palette['zinc-950'], min: 3 },
-	{ where: 'button focus ring on page background (non-text)', fg: palette['emerald-400'], bg: palette['zinc-950'], min: 3 },
-	{ where: 'required marker (decorative, aria-hidden) on dark card', fg: palette['red-400'], bg: palette['zinc-900'], min: 3 }
-];
+const lightPairs = pairsFor(light);
+const darkPairs = pairsFor(dark);
 
 describe.each([
 	['light', lightPairs],

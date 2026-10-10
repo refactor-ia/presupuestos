@@ -22,6 +22,10 @@
 		 *  gets near `max`; sits in the label line's free space, so it never
 		 *  adds a line or shifts layout. */
 		counter?: { current: number; max: number } | null;
+		/** Increment to replay the shake on an invalid submit attempt. */
+		shakeKey?: number;
+		/** Extra classes for the input (e.g. numeric alignment). */
+		inputClass?: string;
 	}
 
 	let {
@@ -37,22 +41,24 @@
 		autocomplete,
 		onblur,
 		inputEl = $bindable(),
-		counter = null
+		counter = null,
+		shakeKey = 0,
+		inputClass = ''
 	}: Props = $props();
 
 	const errorId = $derived(`${id}-error`);
 
 	// Counter visibility thresholds scale with the limit: visible 40 chars
-	// before it, amber 20 before it, red at/over the limit.
+	// before it, accent 20 before it, red at/over the limit.
 	const counterText = $derived.by(() => {
 		if (counter === null || counter.current < counter.max - 40) return null;
 		return `${counter.current}/${counter.max}`;
 	});
 	const counterClass = $derived.by(() => {
 		if (counter === null) return '';
-		if (counter.current >= counter.max) return 'text-red-600 dark:text-red-400';
-		if (counter.current >= counter.max - 20) return 'text-amber-700 dark:text-amber-400';
-		return 'text-slate-500 dark:text-zinc-400';
+		if (counter.current >= counter.max) return 'text-danger';
+		if (counter.current >= counter.max - 20) return 'text-accent';
+		return 'text-fg-2';
 	});
 </script>
 
@@ -61,10 +67,10 @@
 		<label class="field-label" for={id}>
 			{label}
 			{#if required}
-				<span class="text-red-500 dark:text-red-400" aria-hidden="true">*</span>
+				<span class="text-danger" aria-hidden="true">*</span>
 			{/if}
 			{#if optional}
-				<span class="font-normal text-slate-500 dark:text-zinc-400">(opcional)</span>
+				<span class="font-normal text-fg-2">(opcional)</span>
 			{/if}
 		</label>
 		{#if counterText}
@@ -73,6 +79,7 @@
 			</span>
 		{/if}
 	</div>
+	{#key shakeKey}
 	<input
 		bind:this={inputEl}
 		bind:value
@@ -81,12 +88,14 @@
 		{inputmode}
 		{placeholder}
 		{autocomplete}
-		class="field-input"
+		class="field-input {inputClass}"
 		class:field-input-error={error !== null && error !== ''}
+		class:shake={shakeKey > 0 && error !== null && error !== ''}
 		aria-invalid={error ? 'true' : undefined}
 		aria-describedby={error ? errorId : undefined}
 		{onblur}
 	/>
+	{/key}
 	<!-- Reserved slot: always present so error text never shifts neighboring fields. -->
 	<p id={errorId} class="field-error" aria-live="polite">{error ?? ''}</p>
 </div>
