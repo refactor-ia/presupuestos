@@ -7,7 +7,7 @@
 	import Totals from '$lib/components/Totals.svelte';
 	import ParsePanel from '$lib/components/ParsePanel.svelte';
 	import BudgetPicker from '$lib/components/BudgetPicker.svelte';
-	import { ApiError, saveBudget, updateBudget, type Budget } from '$lib/client/api';
+	import { ApiError, saveBudget, updateBudget, sendBudgetEmail, type Budget, type BudgetPayload } from '$lib/client/api';
 	import { formatLongDate } from '$lib/date';
 	import { motionDuration, prefersReducedMotion } from '$lib/motion';
 	import { exportBudgetPdf } from '$lib/pdf/generate';
@@ -154,6 +154,13 @@
 			saveSuccessText = '';
 		}
 		saveNoticeText = null;
+		// A stale send confirmation is a lie after the budget changed: the mail
+		// that already went out no longer describes what is on screen. The
+		// send-busy state survives like save-busy does.
+		if (sendPhase !== 'busy') {
+			sendPhase = 'idle';
+			sendText = '';
+		}
 		clearSaveFeedbackTimer();
 	}
 
@@ -246,6 +253,12 @@
 		items = budget.items.map((item) => ({ ...item }));
 		rowKeys = items.map(() => ++rowKeySeq);
 		savedBudgetId = budget.id;
+		// Recipient follows the loaded budget's client email again (the user
+		// can still override it manually afterwards).
+		sendTouched = false;
+		sendDraft = '';
+		// The loaded state is exactly what SQLite now holds: not dirty.
+		savedSnapshot = JSON.stringify(buildPayload());
 		// Values just loaded are valid; clear blur-touched errors.
 		nameTouched = false;
 		emailTouched = false;
@@ -326,6 +339,91 @@
 	 *  until then every save updates the same row (create-then-update). */
 	let savedBudgetId = $state<number | null>(null);
 
+	// --- Send by email (documented extension; external effect) -------------
+	// Only saved budgets can be sent: the server reads the row from SQLite,
+	// so the mail always reflects stored data. The recipient defaults to the
+	// client email already on the form; the server throttles one mail per
+	// recipient per minute (429) and owns the Postmark credentials.
+	// --- Send by email (documented extension; external effect) -------------
+	// One action, save-then-send: when the form differs from the persisted
+	// row (or was never saved), handleSend persists first, so the mail always
+	// reflects what the user sees. The recipient follows the client email
+	// field until the user edits it deliberately; a loaded budget resets it
+	// to the budget's own client email.
+	let sendDraft = $state('');
+	let sendTouched = $state(false);
+	let sendPhase = $state<'idle' | 'busy' | 'success' | 'error'>('idle');
+	let sendText = $state('');
+	const SEND_ERROR_FALLBACK = 'No se pudo enviar el mail. Intentá de nuevo.';
+	/** Recipient shown/used by the send flow. */
+	const sendEmail = $derived(sendTouched ? sendDraft : clientEmail);
+	const sendEmailInvalid = $derived(
+		sendEmail.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(sendEmail.trim())
+	);
+
+	// Staleness detection: snapshot of the payload as it exists in SQLite.
+	// Every save/load refreshes it; any form mutation makes the comparison
+	// fail and marks the form dirty (save-then-send kicks in).
+	let savedSnapshot = $state('');
+	function buildPayload(): BudgetPayload {
+		return {
+			number: presId ?? '',
+			clientName: clientName.trim(),
+			email: clientEmail.trim(),
+			address: clientAddress.trim(),
+			rut: clientRut.trim(),
+			items: items.map((item) => ({ ...item }))
+		};
+	}
+	const isDirty = $derived(JSON.stringify(buildPayload()) !== savedSnapshot);
+
+	const sendHint = $derived.by(() => {
+		if (items.length === 0) return 'Agregá al menos un ítem para enviarlo por mail.';
+		if (clientInvalid) return messageFor('EXPORT_CLIENT_INVALID');
+		if (sendEmail.trim() === '') return 'Escribí el mail del destinatario.';
+		return null;
+	});
+	const canSend = $derived(
+		presId !== null &&
+			items.length > 0 &&
+			!clientInvalid &&
+			!sendEmailInvalid &&
+			sendPhase !== 'busy' &&
+			savePhase !== 'busy'
+	);
+
+	async function handleSend(): Promise<void> {
+		if (!canSend) return;
+		sendPhase = 'busy';
+		sendText = '';
+		const wasDirty = isDirty;
+		try {
+			if (isDirty) {
+				// Persist first: the mail is built from the SQLite row, so this
+				// guarantees what arrives is exactly what is on screen. handleSave
+				// owns its own feedback and error text.
+				await handleSave();
+				if (savePhase === 'error' || savedBudgetId === null) {
+					sendPhase = 'error';
+					sendText = 'No se pudo guardar el presupuesto, así que no se envió nada.';
+					return;
+				}
+			}
+			const id = savedBudgetId;
+			if (id === null) {
+				sendPhase = 'error';
+				sendText = 'No se pudo guardar el presupuesto, así que no se envió nada.';
+				return;
+			}
+			await sendBudgetEmail(id, sendEmail.trim());
+			sendPhase = 'success';
+			sendText = wasDirty ? `Guardado y enviado a ${sendEmail.trim()}.` : `Enviado a ${sendEmail.trim()}.`;
+		} catch (error) {
+			sendPhase = 'error';
+			sendText = error instanceof ApiError && error.message !== '' ? error.message : SEND_ERROR_FALLBACK;
+		}
+	}
+
 	const saveBusy = $derived(savePhase === 'busy');
 	const canSave = $derived(presId !== null && items.length > 0 && !clientInvalid);
 
@@ -363,6 +461,8 @@
 					? await updateBudget(savedBudgetId, payload)
 					: await saveBudget(payload);
 			savedBudgetId = saved.id;
+			// What SQLite holds now matches the form exactly: not dirty.
+			savedSnapshot = JSON.stringify(buildPayload());
 			// Success echoes the session number, so the user can match the
 			// saved row in the picker without hunting for it.
 			showSaveSuccess(`Guardado como ${sessionNumber}.`);
@@ -716,6 +816,63 @@
 						</p>
 					{:else}
 						<p id={exportHintId} class="field-hint" aria-live="polite">{exportHint ?? ''}</p>
+					{/if}
+				</div>
+			</div>
+			<!-- Send by email (documented extension): one action, save-then-send.
+			     Always rendered next to the export action it complements; the
+			     hint slot explains the gate instead of hiding the control. -->
+			<div class="mt-4 flex flex-col gap-2">
+				<label class="field-label" for="send-email">Enviar por mail a</label>
+				<div class="flex items-start gap-2">
+					<input
+						id="send-email"
+						type="email"
+						value={sendTouched ? sendDraft : clientEmail}
+						oninput={(event) => {
+							sendTouched = true;
+							sendDraft = event.currentTarget.value;
+						}}
+						class="field-input flex-1"
+						placeholder="destinatario@dominio.com"
+						aria-invalid={sendEmailInvalid}
+						disabled={sendPhase === 'busy'}
+					/>
+					<button
+						type="button"
+						class="btn btn-secondary shrink-0"
+						onclick={handleSend}
+						disabled={!canSend}
+						aria-busy={sendPhase === 'busy'}
+						aria-describedby={sendHint !== null ? 'send-hint' : undefined}
+					>
+						{#if sendPhase === 'busy'}
+							<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+								<path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+							</svg>
+							{isDirty ? 'Guardando y enviando…' : 'Enviando…'}
+						{:else}
+							{isDirty ? 'Guardar y enviar' : 'Enviar'}
+						{/if}
+					</button>
+				</div>
+				<!-- Reserved slot: hint / invalid / result swap in place without
+				     shifting the composition below. -->
+				<div class="min-h-5">
+					{#if sendEmailInvalid}
+						<p class="text-sm text-red-600 dark:text-red-400" role="alert">El mail del destinatario no es válido.</p>
+					{:else if sendText !== ''}
+						<p
+							class="text-sm {sendPhase === 'error'
+								? 'text-red-600 dark:text-red-400'
+								: 'text-emerald-700 dark:text-emerald-400'}"
+							role={sendPhase === 'error' ? 'alert' : 'status'}
+						>
+							{sendText}
+						</p>
+					{:else if sendHint !== null}
+						<p id="send-hint" class="field-hint" aria-live="polite">{sendHint}</p>
 					{/if}
 				</div>
 			</div>

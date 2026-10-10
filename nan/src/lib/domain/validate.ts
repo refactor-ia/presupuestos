@@ -26,7 +26,12 @@ export type ErrorCode =
 	| 'QUANTITY_INVALID'
 	| 'PRICE_INVALID'
 	| 'PRICE_BELOW_MINIMUM'
-	| 'ITEM_LIMIT_REACHED';
+	| 'ITEM_LIMIT_REACHED'
+	| 'MAIL_RECIPIENT_INVALID'
+	| 'MAIL_NOT_FOUND'
+	| 'MAIL_THROTTLED'
+	| 'MAIL_UNAVAILABLE'
+	| 'MAIL_NOT_CONFIGURED';
 
 /** Input limits from the spec input contract (limits_proposed_v2). */
 export const LIMITS = {

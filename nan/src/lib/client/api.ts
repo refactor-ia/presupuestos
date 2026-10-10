@@ -119,6 +119,19 @@ export async function deleteBudget(id: number): Promise<void> {
 	}
 }
 
+/** POST /api/budgets/[id]/send — emails a saved budget; rejects with ApiError
+ *  when missing, invalid, throttled (429) or the mail service is down. */
+export async function sendBudgetEmail(id: number, email: string): Promise<void> {
+	const response = await fetch(`/api/budgets/${id}/send`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email })
+	});
+	if (!response.ok) {
+		throw await apiErrorFrom(response);
+	}
+}
+
 /**
  * One downstream parse event, as emitted by /api/parse (SSE `data:` frames).
  * Unknown event types and malformed frames are dropped by the parser below.
