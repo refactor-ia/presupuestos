@@ -48,6 +48,35 @@
 		'El dictado necesita un navegador con micrófono y una conexión segura (HTTPS o localhost).';
 	const DICTATION_REQUEST_ERROR = 'No se pudo transcribir el audio. Intentá de nuevo.';
 
+	// Spoken confirmation: when the parse stream finishes cleanly the server
+	// synthesizes a short phrase (Kokoro, Santa voice) and the client plays
+	// it. Autoplay is covered by the click that started the parse.
+	const SPEAK_PHRASE = '¡Bien, papá! Presupuesto listo.';
+	let lastSpokenParse = 0;
+
+	/** Plays the spoken confirmation; failures are silent by design — the
+	 *  chiche never turns into an error for the user. */
+	async function playConfirmation(): Promise<void> {
+		const now = Date.now();
+		// Guard against double completion of the same parse (done + stream end).
+		if (now - lastSpokenParse < 500) return;
+		lastSpokenParse = now;
+		try {
+			const response = await fetch('/api/speak', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ text: SPEAK_PHRASE })
+			});
+			if (!response.ok) return;
+			const blob = await response.blob();
+			const audio = new Audio(URL.createObjectURL(blob));
+			audio.addEventListener('ended', () => URL.revokeObjectURL(audio.src));
+			await audio.play();
+		} catch {
+			// Intentionally ignored: the confirmation is a delight, not a step.
+		}
+	}
+
 	const canDictate = $derived(
 		typeof navigator !== 'undefined' &&
 			navigator.mediaDevices !== undefined &&
@@ -208,6 +237,7 @@
 						stop = true;
 					} else if (parsedEvent.type === 'done') {
 						done = true;
+						void playConfirmation();
 					}
 				}
 				if (stop) {
