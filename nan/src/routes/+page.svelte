@@ -7,7 +7,7 @@
 	import Totals from '$lib/components/Totals.svelte';
 	import ParsePanel from '$lib/components/ParsePanel.svelte';
 	import BudgetPicker from '$lib/components/BudgetPicker.svelte';
-	import { ApiError, saveBudget, updateBudget, type Budget } from '$lib/client/api';
+	import { ApiError, saveBudget, updateBudget, sendBudgetEmail, type Budget } from '$lib/client/api';
 	import { formatLongDate } from '$lib/date';
 	import { motionDuration, prefersReducedMotion } from '$lib/motion';
 	import { exportBudgetPdf } from '$lib/pdf/generate';
@@ -325,6 +325,39 @@
 	 *  control exists, so resetting to null happens on page reload only:
 	 *  until then every save updates the same row (create-then-update). */
 	let savedBudgetId = $state<number | null>(null);
+
+	// --- Send by email (documented extension; external effect) -------------
+	// Only saved budgets can be sent: the server reads the row from SQLite,
+	// so the mail always reflects stored data. The recipient defaults to the
+	// client email already on the form; the server throttles one mail per
+	// recipient per minute (429) and owns the Postmark credentials.
+	let sendEmail = $state('');
+	let sendPhase = $state<'idle' | 'busy' | 'success' | 'error'>('idle');
+	let sendText = $state('');
+	const SEND_ERROR_FALLBACK = 'No se pudo enviar el mail. Intentá de nuevo.';
+	const sendEmailInvalid = $derived(
+		sendEmail.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(sendEmail.trim())
+	);
+	const canSend = $derived(
+		savedBudgetId !== null &&
+			sendEmail.trim() !== '' &&
+			!sendEmailInvalid &&
+			sendPhase !== 'busy'
+	);
+
+	async function handleSend(): Promise<void> {
+		if (!canSend || savedBudgetId === null) return;
+		sendPhase = 'busy';
+		sendText = '';
+		try {
+			await sendBudgetEmail(savedBudgetId, sendEmail.trim());
+			sendPhase = 'success';
+			sendText = `Enviado a ${sendEmail.trim()}.`;
+		} catch (error) {
+			sendPhase = 'error';
+			sendText = error instanceof ApiError && error.message !== '' ? error.message : SEND_ERROR_FALLBACK;
+		}
+	}
 
 	const saveBusy = $derived(savePhase === 'busy');
 	const canSave = $derived(presId !== null && items.length > 0 && !clientInvalid);
@@ -842,6 +875,55 @@
 					<p id={saveHintId} class="field-hint" aria-live="polite">{saveHint}</p>
 				{/if}
 			</div>
+			<!-- Send by email (documented extension): only for saved budgets, one
+		     recipient, server-throttled. Hidden while the form is unsaved. -->
+			{#if savedBudgetId !== null}
+				<div class="mt-4 flex flex-col gap-2">
+					<label class="field-label" for="send-email">Enviar por mail a</label>
+					<div class="flex items-start gap-2">
+						<input
+							id="send-email"
+							type="email"
+							bind:value={sendEmail}
+							class="field-input flex-1"
+							placeholder="destinatario@dominio.com"
+							aria-invalid={sendEmailInvalid}
+							disabled={sendPhase === 'busy'}
+						/>
+						<button
+							type="button"
+							class="btn btn-secondary shrink-0"
+							onclick={handleSend}
+							disabled={!canSend}
+							aria-busy={sendPhase === 'busy'}
+						>
+							{#if sendPhase === 'busy'}
+								<svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+									<path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+								</svg>
+								Enviando…
+							{:else}
+								Enviar
+							{/if}
+						</button>
+					</div>
+					<div class="min-h-5">
+						{#if sendEmailInvalid}
+							<p class="text-sm text-red-600 dark:text-red-400" role="alert">El mail del destinatario no es válido.</p>
+						{:else if sendText !== ''}
+							<p
+								class="text-sm {sendPhase === 'error'
+									? 'text-red-600 dark:text-red-400'
+									: 'text-emerald-700 dark:text-emerald-400'}"
+								role={sendPhase === 'error' ? 'alert' : 'status'}
+							>
+								{sendText}
+							</p>
+						{/if}
+					</div>
+				</div>
+			{/if}
 			<div class="mt-6">
 				<BudgetPicker
 					bind:this={picker}
